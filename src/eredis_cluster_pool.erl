@@ -2,7 +2,7 @@
 -behaviour(supervisor).
 
 %% API.
--export([create/2]).
+-export([create/3]).
 -export([stop/1]).
 -export([transaction/2]).
 
@@ -12,19 +12,14 @@
 
 -include("eredis_cluster.hrl").
 
--spec create(Host::string(), Port::integer()) ->
+-spec create(Host::string(), Port::integer(), options()) ->
     {ok, PoolName::atom()} | {error, PoolName::atom()}.
-create(Host, Port) ->
+create(Host, Port, Options) ->
     PoolName = get_name(Host, Port),
 
     case whereis(PoolName) of
         undefined ->
-            Password = application:get_env(eredis_cluster, password, ""),
-            WorkerArgs = [{host, Host},
-                          {port, Port},
-                          {password, Password}
-                         ],
-
+            WorkerArgs = [{host, Host}, {port, Port}] ++ Options,
             Size = application:get_env(eredis_cluster, pool_size, 10),
             MaxOverflow = application:get_env(eredis_cluster, pool_max_overflow, 0),
 

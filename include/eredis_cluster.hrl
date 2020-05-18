@@ -14,6 +14,8 @@
     | {error, redis_error_result()}.
 -type redis_result() :: redis_simple_result() | redis_pipeline_result().
 
+-type options() :: [{term(), term()}].
+
 -record(node, {
     address :: string(),
     port :: integer(),

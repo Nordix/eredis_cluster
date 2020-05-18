@@ -1,12 +1,13 @@
 -module(eredis_cluster).
 -behaviour(application).
 
-% Application.
--export([start/2]).
--export([stop/1]).
+%% Application
+-export([start/0, stop/0]).
+%% Application callback
+-export([start/2, stop/1]).
 
-% API.
--export([start/0, stop/0, connect/1]). % Application Management.
+%% Management
+-export([connect/1, connect/2]).
 
 % Generic redis call
 -export([q/1, qp/1, qw/2, qk/2, qa/1, qmn/1, transaction/1, transaction/2]).
@@ -22,31 +23,40 @@
 
 -include("eredis_cluster.hrl").
 
+%% @doc Start application.
+-spec start() -> ok | {error, Reason::term()}.
+start() ->
+    application:start(?MODULE).
+
+%% @doc Stop application.
+-spec stop() -> ok | {error, Reason::term()}.
+stop() ->
+    application:stop(?MODULE).
+
+
+%% @doc Application behaviour callback
 -spec start(StartType::application:start_type(), StartArgs::term()) ->
     {ok, pid()}.
 start(_Type, _Args) ->
     eredis_cluster_sup:start_link().
 
+%% @doc Application behaviour callback
 -spec stop(State::term()) -> ok.
 stop(_State) ->
     ok.
 
--spec start() -> ok | {error, Reason::term()}.
-start() ->
-    application:start(?MODULE).
-
--spec stop() -> ok | {error, Reason::term()}.
-stop() ->
-    application:stop(?MODULE).
-
 %% =============================================================================
-%% @doc Connect to a set of init node, useful if the cluster configuration is
+%% @doc Connect to a set of init nodes, useful if the cluster configuration is
 %% not known at startup
 %% @end
 %% =============================================================================
 -spec connect(InitServers::term()) -> Result::term().
 connect(InitServers) ->
-    eredis_cluster_monitor:connect(InitServers).
+    connect(InitServers, []).
+
+-spec connect(InitServers::term(), Options::options()) -> Result::term().
+connect(InitServers, Options) ->
+    eredis_cluster_monitor:connect(InitServers, Options).
 
 %% =============================================================================
 %% @doc Wrapper function to execute a pipeline command as a transaction Command

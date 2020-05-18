@@ -1,10 +1,18 @@
-# eredis_cluster
-[![Travis](https://img.shields.io/travis/adrienmo/eredis_cluster.svg?branch=master&style=flat-square)](https://travis-ci.org/adrienmo/eredis_cluster)
-[![Hex.pm](https://img.shields.io/hexpm/v/eredis_cluster.svg?style=flat-square)](https://hex.pm/packages/eredis_cluster)
+# eredis_cluster (Nordix fork)
 
 ## Description
 
 eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
+
+Improvements compared to `adrienmo/eredis_cluster`:
+
+* Support of TLS introduced in Redis 6
+* Uses Nordix/eredis
+* Added `eredis_cluster:connect/2` that takes a proplist with options
+* Dialyzer corrections
+* Elvis code formatting
+* Improved test coverage
+* Containerized testing
 
 ## TODO
 
@@ -44,7 +52,16 @@ your app.config):
 You don't need to specify all nodes of your configuration as eredis_cluster will
 retrieve them through the command `CLUSTER SLOTS` at runtime.
 
-An alternative is to set the configurations programmatically:
+### Configuration description
+
+* `pool_size`: Number of connected clients to each Redis instance. Default: `10`
+* `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
+* `password`: Password to use for a Redis cluster configured with `requirepass`. Default: `""` (i.e. AUTH not sent)
+* `init_nodes`: List of Redis instances to fetch cluster information from. Default: `[]`
+
+### Configuring via API
+
+An alternative is to set the configurations programmatically via set_env() and `eredis_cluster:connect/2`.
 
 ```erlang
 application:set_env(eredis_cluster, pool_size, 5),
@@ -56,12 +73,26 @@ eredis_cluster:connect([{"127.0.0.1", 30001},
                         {"127.0.0.1", 30002}]).
 ```
 
-Configuration description:
+### Configuring via API with extra options
 
-* `init_nodes`: List of Redis instances to fetch cluster information from. Default: `[]`
-* `pool_size`: Number of connected clients to each Redis instance. Default: `10`
-* `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
-* `password`: Password to use for a Redis cluster configured with `requirepass`. Default: `""` (i.e. AUTH not sent)
+To enable TLS or to performance tune sockets use `eredis_cluster:connect/3` instead.
+
+```erlang
+Options = [{tls, [{cacertfile, "ca.crt"},
+                  {certfile, "client.crt"},
+                  {keyfile, "client.key"}]}],
+eredis_cluster:connect([{"127.0.0.1", 30001},
+                        {"127.0.0.1", 30002}], Options).
+```
+
+#### Options description
+
+The following options are available via the proplist in `eredis_cluster:connect/3`
+
+* `tls`: Enable TLS/SSL and use specified [TLSOptions](https://erlang.org/doc/man/ssl.html#type-client_option). Default: TLS not enabled.
+* `connect_timeout`: [Timeout](https://erlang.org/doc/man/gen_tcp.html#connect-4) when attempting to connect. Default: `5000` [ms]
+* `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`
+* `reconnect_sleep`: Time between reconnection attempts. Default: `100` [ms]
 
 ## Usage
 
@@ -129,3 +160,13 @@ eredis_cluster:qa(["FLUSHDB"]).
 %% Execute a query on the server containing the key "TEST"
 eredis_cluster:qk(["FLUSHDB"], "TEST").
 ```
+
+## Troubleshooting
+
+Following Redis-log indicates that Redis accepts TLS, but the client is not configured for TLS.
+
+```
+# Error accepting a client connection: error:1408F10B:SSL routines:ssl3_get_record:wrong version number (conn: fd=12)
+```
+
+Debug logging for TLS connections can be enabled in eredis_cluster by the connect option: `{log_level, debug}`

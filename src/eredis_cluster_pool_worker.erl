@@ -22,11 +22,9 @@ start_link(Args) ->
 init(Args) ->
     Hostname = proplists:get_value(host, Args),
     Port = proplists:get_value(port, Args),
-    DataBase = proplists:get_value(database, Args, 0),
-    Password = proplists:get_value(password, Args, ""),
 
     process_flag(trap_exit, true),
-    Result = eredis:start_link(Hostname, Port, [{database, DataBase}, {password, Password}]),
+    Result = eredis:start_link(Hostname, Port, Args),
     process_flag(trap_exit, false),
 
     Conn = case Result of

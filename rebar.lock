@@ -1,7 +1,7 @@
 {"1.1.0",
 [{<<"eredis">>,
   {git,"git://github.com/Nordix/eredis.git",
-       {ref,"7f9fada1a96bd8b35a3549837773ec216a9ae32c"}},
+       {ref,"45128ec264ae1e17d952b74d4a40702872249e73"}},
   0},
  {<<"poolboy">>,{pkg,<<"poolboy">>,<<"1.5.2">>},0}]}.
 [
