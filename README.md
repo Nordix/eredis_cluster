@@ -13,6 +13,8 @@ Improvements compared to `adrienmo/eredis_cluster`:
 * Elvis code formatting
 * Improved test coverage
 * Containerized testing
+* Added APIs:
+  - q_noreply/1 - query a single Redis instance but wont wait for its result
 
 ## TODO
 

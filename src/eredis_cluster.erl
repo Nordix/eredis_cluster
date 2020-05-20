@@ -10,7 +10,8 @@
 -export([connect/1, connect/2]).
 
 % Generic redis call
--export([q/1, qp/1, qw/2, qk/2, qa/1, qmn/1, transaction/1, transaction/2]).
+-export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qw/2, qmn/1]).
+-export([transaction/1, transaction/2]).
 
 % Specific redis command implementation
 -export([flushdb/0]).
@@ -59,6 +60,58 @@ connect(InitServers, Options) ->
     eredis_cluster_monitor:connect(InitServers, Options).
 
 %% =============================================================================
+%% @doc This function execute simple or pipelined command on a single redis node
+%% the node will be automatically found according to the key used in the command
+%% @end
+%% =============================================================================
+-spec q(redis_command()) -> redis_result().
+q(Command) ->
+    query(Command).
+
+-spec qk(redis_command(), bitstring()) -> redis_result().
+qk(Command, PoolKey) ->
+    query(Command, PoolKey).
+
+%% =============================================================================
+%% @doc Execute simple or pipelined commands on a single Redis node, but
+%% ignoring any response from Redis. (Fire and forget)
+%% @end
+%% =============================================================================
+q_noreply(Command) ->
+    PoolKey = get_key_from_command(Command),
+    query_noreply(Command, PoolKey).
+
+%% =============================================================================
+%% @doc Wrapper function for command using pipelined commands
+%% @end
+%% =============================================================================
+-spec qp(redis_pipeline_command()) -> redis_pipeline_result().
+qp(Commands) -> q(Commands).
+
+%% =============================================================================
+%% @doc Perform a given query on all node of a redis cluster
+%% @end
+%% =============================================================================
+-spec qa(redis_command()) -> [redis_transaction_result()].
+qa(Command) ->
+    Pools = eredis_cluster_monitor:get_all_pools(),
+    Transaction = fun(Worker) -> qw(Worker, Command) end,
+    [eredis_cluster_pool:transaction(Pool, Transaction) || Pool <- Pools].
+
+%% =============================================================================
+%% @doc Wrapper function to be used for direct call to a pool worker in the
+%% function passed to the transaction/2 method
+%% @end
+%% =============================================================================
+-spec qw(Worker::pid(), redis_command()) -> redis_result().
+qw(Worker, Command) ->
+    eredis_cluster_pool_worker:query(Worker, Command).
+
+-spec qw_noreply(Worker::pid(), redis_command()) -> redis_result().
+qw_noreply(Worker, Command) ->
+    eredis_cluster_pool_worker:query_noreply(Worker, Command).
+
+%% =============================================================================
 %% @doc Wrapper function to execute a pipeline command as a transaction Command
 %% (it will add MULTI and EXEC command)
 %% @end
@@ -67,30 +120,6 @@ connect(InitServers, Options) ->
 transaction(Commands) ->
     Result = q([["multi"]| Commands] ++ [["exec"]]),
     lists:last(Result).
-
-%% =============================================================================
-%% @doc Execute a function on a pool worker. This function should be use when
-%% transaction method such as WATCH or DISCARD must be used. The pool used to
-%% execute the transaction is specified by giving a key that this pool is
-%% containing.
-%% @end
-%% =============================================================================
--spec transaction(fun((Worker::pid()) -> redis_result()), anystring()) -> any().
-transaction(Transaction, PoolKey) ->
-    Slot = get_key_slot(PoolKey),
-    transaction(Transaction, Slot, undefined, 0).
-
-transaction(Transaction, Slot, undefined, _) ->
-    query(Transaction, Slot, 0);
-transaction(Transaction, Slot, ExpectedValue, Counter) ->
-    case query(Transaction, Slot, 0) of
-        ExpectedValue ->
-            transaction(Transaction, Slot, ExpectedValue, Counter - 1);
-        {ExpectedValue, _} ->
-            transaction(Transaction, Slot, ExpectedValue, Counter - 1);
-        Payload ->
-            Payload
-    end.
 
 %% =============================================================================
 %% @doc Multi node query
@@ -128,6 +157,32 @@ qmn2([], [], Acc, _) ->
             end, Acc),
     [Res || {_, Res} <- SortedAcc].
 
+%% =============================================================================
+%% @doc Execute a function on a pool worker. This function should be use when
+%% transaction method such as WATCH or DISCARD must be used. The pool used to
+%% execute the transaction is specified by giving a key that this pool is
+%% containing.
+%% @end
+%% =============================================================================
+-spec transaction(fun((Worker::pid()) -> redis_result()), anystring()) -> any().
+transaction(Transaction, PoolKey) ->
+    Slot = get_key_slot(PoolKey),
+    transaction(Transaction, Slot, undefined, 0).
+
+transaction(Transaction, Slot, undefined, _) ->
+    query(Transaction, Slot, 0);
+transaction(Transaction, Slot, ExpectedValue, Counter) ->
+    case query(Transaction, Slot, 0) of
+        ExpectedValue ->
+            transaction(Transaction, Slot, ExpectedValue, Counter - 1);
+        {ExpectedValue, _} ->
+            transaction(Transaction, Slot, ExpectedValue, Counter - 1);
+        Payload ->
+            Payload
+    end.
+
+%% =============================================================================
+
 split_by_pools(Commands) ->
     State = eredis_cluster_monitor:get_state(),
     split_by_pools(Commands, 1, [], [], State).
@@ -154,26 +209,6 @@ split_by_pools([], _Index, CmdAcc, MapAcc, State) ->
     MapAcc2 = [{Pool, lists:reverse(Mapping)} || {Pool, Mapping} <- MapAcc],
     {CmdAcc2, MapAcc2, eredis_cluster_monitor:get_state_version(State)}.
 
-%% =============================================================================
-%% @doc Wrapper function for command using pipelined commands
-%% @end
-%% =============================================================================
--spec qp(redis_pipeline_command()) -> redis_pipeline_result().
-qp(Commands) -> q(Commands).
-
-%% =============================================================================
-%% @doc This function execute simple or pipelined command on a single redis node
-%% the node will be automatically found according to the key used in the command
-%% @end
-%% =============================================================================
--spec q(redis_command()) -> redis_result().
-q(Command) ->
-    query(Command).
-
--spec qk(redis_command(), bitstring()) -> redis_result().
-qk(Command, PoolKey) ->
-    query(Command, PoolKey).
-
 query(Command) ->
     PoolKey = get_key_from_command(Command),
     query(Command, PoolKey).
@@ -184,6 +219,15 @@ query(Command, PoolKey) ->
     Slot = get_key_slot(PoolKey),
     Transaction = fun(Worker) -> qw(Worker, Command) end,
     query(Transaction, Slot, 0).
+
+query_noreply(_, undefined) ->
+    {error, invalid_cluster_command};
+query_noreply(Command, PoolKey) ->
+    Slot = get_key_slot(PoolKey),
+    Transaction = fun(Worker) -> qw_noreply(Worker, Command) end,
+    {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+    eredis_cluster_pool:transaction(Pool, Transaction),
+    ok.
 
 query(_, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
     {error, no_connection};
@@ -342,25 +386,6 @@ eval(Script, ScriptHash, Keys, Args) ->
         Result ->
             Result
     end.
-
-%% =============================================================================
-%% @doc Perform a given query on all node of a redis cluster
-%% @end
-%% =============================================================================
--spec qa(redis_command()) -> [redis_transaction_result()].
-qa(Command) ->
-    Pools = eredis_cluster_monitor:get_all_pools(),
-    Transaction = fun(Worker) -> qw(Worker, Command) end,
-    [eredis_cluster_pool:transaction(Pool, Transaction) || Pool <- Pools].
-
-%% =============================================================================
-%% @doc Wrapper function to be used for direct call to a pool worker in the
-%% function passed to the transaction/2 method
-%% @end
-%% =============================================================================
--spec qw(Worker::pid(), redis_command()) -> redis_result().
-qw(Worker, Command) ->
-    eredis_cluster_pool_worker:query(Worker, Command).
 
 %% =============================================================================
 %% @doc Perform flushdb command on each node of the redis cluster

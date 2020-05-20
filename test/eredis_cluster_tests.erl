@@ -17,6 +17,18 @@ basic_test_() ->
             end
             },
 
+	    { "get and set, not waiting for redis reply",
+            fun() ->
+                ?assertEqual(ok, eredis_cluster:q_noreply(["SET", "key", "value"])),
+                ?assertEqual({ok, <<"value">>}, eredis_cluster:q(["GET","key"])),
+                ?assertEqual({ok, undefined}, eredis_cluster:q(["GET","nonexists"])),
+
+                %% Test of faulty command, gives ok with noreply
+                ?assertMatch({error, _}, eredis_cluster:q(["SET", "test"])),
+                ?assertEqual(ok, eredis_cluster:q_noreply(["SET", "test"]))
+            end
+            },
+
             { "binary",
             fun() ->
                 ?assertEqual({ok, <<"OK">>}, eredis_cluster:q([<<"SET">>, <<"key_binary">>, <<"value_binary">>])),
