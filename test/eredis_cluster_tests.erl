@@ -191,6 +191,26 @@ basic_test_() ->
                    ?assertEqual({ok, [<<"10">>]}, eredis_cluster:eval(Script, Hash, ["klmn"], [])),
                    ?assertEqual({ok, undefined}, eredis_cluster:eval(Script, Hash, ["nada"], []))
            end
+         },
+         { "scan",
+           fun () ->
+                   Key1 = "scan{1}return1",
+                   Key2 = "scan{1}return2",
+                   Key3 = "noscan{1}return",
+                   eredis_cluster:q(["set", Key1, "test"]),
+                   eredis_cluster:q(["set", Key2, "test"]),
+                   eredis_cluster:q(["set", Key3, "test"]),
+
+                   Slot = eredis_cluster:get_key_slot(Key1),
+                   {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+                   {ok, [<<_Cursor>>, RetKeys]} = eredis_cluster:scan(Pool, 0, "scan{1}return*", 5000),
+
+                   StrKeys = lists:map(fun(Key) -> binary_to_list(Key) end, RetKeys),
+                   ?assertEqual(2, length(StrKeys)),
+                   ?assertEqual(true, lists:member(Key1, StrKeys)),
+                   ?assertEqual(true, lists:member(Key2, StrKeys)),
+                   ?assertEqual(false, lists:member(Key3, StrKeys))
+           end
          }
       ]
     }

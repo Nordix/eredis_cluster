@@ -14,13 +14,17 @@
 -export([transaction/1, transaction/2]).
 
 % Specific redis command implementation
--export([flushdb/0, load_script/1]).
+-export([flushdb/0, load_script/1, scan/4]).
 
  % Helper functions
 -export([update_key/2]).
 -export([update_hash_field/3]).
 -export([optimistic_locking_transaction/3]).
 -export([eval/4]).
+
+-ifdef(TEST).
+-export([get_key_slot/1]).
+-endif.
 
 -include("eredis_cluster.hrl").
 
@@ -131,7 +135,6 @@ qmn(Commands) -> qmn(Commands, 0).
 qmn(_, ?REDIS_CLUSTER_REQUEST_TTL) ->
     {error, no_connection};
 qmn(Commands, Counter) ->
-    %% Throttle retries
     throttle_retries(Counter),
 
     {CommandsByPools, MappingInfo, Version} = split_by_pools(Commands),
@@ -182,6 +185,20 @@ transaction(Transaction, Slot, ExpectedValue, Counter) ->
     end.
 
 %% =============================================================================
+%% @doc Perform flushdb command on each node of the redis cluster
+%% @end
+%% =============================================================================
+-spec flushdb() -> ok | {error, Reason::bitstring()}.
+flushdb() ->
+    Result = qa(["FLUSHDB"]),
+    case proplists:lookup(error, Result) of
+        none ->
+            ok;
+        Error ->
+            Error
+    end.
+
+%% =============================================================================
 %% @doc Load LUA script to all master nodes in the Redis cluster.
 %% @end
 %% =============================================================================
@@ -199,6 +216,31 @@ load_script(Script) ->
             end;
         Result ->
             Result
+    end.
+
+%% =============================================================================
+%% @doc Perform scan command on a specific node in the Redis cluster.
+%% @end
+%% =============================================================================
+-spec scan(PoolName::atom(), Cursor::integer(), Pattern::string(), Count::integer())
+          -> redis_result() | {error, Reason::bitstring()}.
+scan(PoolName, Cursor, Pattern, Count) when is_list(Pattern) ->
+    scan(PoolName, Cursor, Pattern, Count, 0).
+
+scan(_, _, _, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
+    {error, no_connection};
+scan(PoolName, Cursor, Pattern, Count, RetryCounter) ->
+    throttle_retries(RetryCounter),
+
+    Command = ["scan", Cursor, "match", Pattern, "count", Count],
+    Transaction = fun(Worker) -> qw(Worker, Command) end,
+    Result = eredis_cluster_pool:transaction(PoolName, Transaction),
+
+    State = eredis_cluster_monitor:get_state(),
+    Version = eredis_cluster_monitor:get_state_version(State),
+    case handle_transaction_result(Result, Version) of
+        retry -> scan(PoolName, Cursor, Pattern, Count, RetryCounter + 1);
+        Result -> Result
     end.
 
 %% =============================================================================
@@ -252,7 +294,6 @@ query_noreply(Command, PoolKey) ->
 query(_, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
     {error, no_connection};
 query(Transaction, Slot, Counter) ->
-    %% Throttle retries
     throttle_retries(Counter),
 
     {Pool, Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
@@ -405,20 +446,6 @@ eval(Script, ScriptHash, Keys, Args) ->
             Result;
         Result ->
             Result
-    end.
-
-%% =============================================================================
-%% @doc Perform flushdb command on each node of the redis cluster
-%% @end
-%% =============================================================================
--spec flushdb() -> ok | {error, Reason::bitstring()}.
-flushdb() ->
-    Result = qa(["FLUSHDB"]),
-    case proplists:lookup(error, Result) of
-        none ->
-            ok;
-        Error ->
-            Error
     end.
 
 %% =============================================================================
