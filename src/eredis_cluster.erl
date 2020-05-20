@@ -14,7 +14,7 @@
 -export([transaction/1, transaction/2]).
 
 % Specific redis command implementation
--export([flushdb/0]).
+-export([flushdb/0, load_script/1]).
 
  % Helper functions
 -export([update_key/2]).
@@ -179,6 +179,26 @@ transaction(Transaction, Slot, ExpectedValue, Counter) ->
             transaction(Transaction, Slot, ExpectedValue, Counter - 1);
         Payload ->
             Payload
+    end.
+
+%% =============================================================================
+%% @doc Load LUA script to all master nodes in the Redis cluster.
+%% @end
+%% =============================================================================
+-spec load_script(string()) -> redis_result().
+load_script(Script) ->
+    Command = ["SCRIPT", "LOAD", Script],
+    case qa(Command) of
+        Result when is_list(Result) ->
+            case proplists:lookup(error, Result) of
+                none ->
+                    [{ok, SHA1}|_] = Result,
+                    {ok,  SHA1};
+                Error ->
+                    Error
+            end;
+        Result ->
+            Result
     end.
 
 %% =============================================================================

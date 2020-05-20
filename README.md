@@ -14,8 +14,8 @@ Improvements compared to `adrienmo/eredis_cluster`:
 * Improved test coverage
 * Containerized testing
 * Added APIs:
-  - q_noreply/1 - query a single Redis instance but wont wait for its result
-
+  - q_noreply/1   - query a single Redis instance but wont wait for its result
+  - load_script/1 - Pre-load script to all Redis instances
 ## TODO
 
 - Improve test suite to demonstrate the case where Redis cluster is crashing,

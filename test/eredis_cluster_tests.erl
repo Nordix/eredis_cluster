@@ -175,8 +175,23 @@ basic_test_() ->
                 eredis_cluster:eval(Script, ScriptHash, ["qrs"], ["evaltest"]),
                 ?assertEqual({ok, <<"evaltest">>}, eredis_cluster:q(["get", "qrs"]))
             end
-            }
+            },
 
+         { "load script and evalsha",
+           fun () ->
+                   %% Error compiling script
+                   ?assertMatch({error, _}, eredis_cluster:load_script("scriptfailure")),
+
+                   Script = "local k = KEYS[1]
+                  if redis.call('exists', k) == 1 then
+                     return redis.call('hvals', k)
+                     end",
+                   {ok, Hash} = eredis_cluster:load_script(Script),
+                   eredis_cluster:q(["hset", "klmn", "rst", 10]),
+                   ?assertEqual({ok, [<<"10">>]}, eredis_cluster:eval(Script, Hash, ["klmn"], [])),
+                   ?assertEqual({ok, undefined}, eredis_cluster:eval(Script, Hash, ["nada"], []))
+           end
+         }
       ]
     }
 }.
