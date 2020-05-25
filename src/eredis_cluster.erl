@@ -10,7 +10,7 @@
 -export([connect/1, connect/2]).
 
 % Generic redis call
--export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qw/2, qmn/1]).
+-export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qa2/1, qw/2, qmn/1]).
 -export([transaction/1, transaction/2]).
 
 % Specific redis command implementation
@@ -102,6 +102,51 @@ qa(Command) ->
     Pools = eredis_cluster_monitor:get_all_pools(),
     Transaction = fun(Worker) -> qw(Worker, Command) end,
     [eredis_cluster_pool:transaction(Pool, Transaction) || Pool <- Pools].
+
+%% =============================================================================
+%% @doc Perform a given query on all master nodes of a redis cluster and
+%% return result with master node reference in result.
+%% When connection to master failed then do refresh mapping and try again to
+%% query.
+%% @end
+%% =============================================================================
+-spec qa2(redis_command()) -> [{atom(), redis_result()}] | {error, no_connection}.
+qa2(Command) -> qa2(Command, 0, []).
+
+qa2(_, ?REDIS_CLUSTER_REQUEST_TTL, Res) ->
+    case Res of
+        [] -> {error, no_connection};
+        _  -> Res
+    end;
+qa2(Command, Counter, Res) ->
+    throttle_retries(Counter),
+
+    State = eredis_cluster_monitor:get_state(),
+    Version = eredis_cluster_monitor:get_state_version(State),
+    Pools = eredis_cluster_monitor:get_all_pools(),
+    case Pools of
+        [] ->
+            eredis_cluster_monitor:refresh_mapping(Version),
+            qa2(Command, Counter + 1, Res);
+        _ ->
+            Transaction = fun(Worker) -> qw(Worker, Command) end,
+            Result = [{Pool, eredis_cluster_pool:transaction(Pool, Transaction)} ||
+                         Pool <- Pools],
+            Tmp = lists:foldl(
+                    fun({_P, TR}, Acc) ->
+                            case handle_transaction_result(TR, Version)
+                            of
+                                retry -> [retry|Acc];
+                                _     -> Acc
+                            end
+                    end, [], Result),
+            case lists:member(retry, Tmp) of
+                true ->
+                    qa2(Command, Counter + 1, Result);
+                false ->
+                    Result
+            end
+    end.
 
 %% =============================================================================
 %% @doc Wrapper function to be used for direct call to a pool worker in the

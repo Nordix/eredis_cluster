@@ -14,8 +14,10 @@ Improvements compared to `adrienmo/eredis_cluster`:
 * Improved test coverage
 * Containerized testing
 * Added APIs:
+  - qa2/1                 - query all nodes with re-attempts, returns [{Node, Result},..]
   - q_noreply/1           - query a single Redis instance but wont wait for its result
   - load_script/1         - pre-load script to all Redis instances
+  - scan/4                - Perform a scan command on given Redis instance
   - get_pool_by_command/1 - get which Redis pool that handles a given command
   - get_pool_by_key/1     - get which Redis pool that handles a given key
 
@@ -66,7 +68,7 @@ retrieve them through the command `CLUSTER SLOTS` at runtime.
 
 ### Configuring via API
 
-An alternative is to set the configurations programmatically via set_env() and `eredis_cluster:connect/2`.
+An alternative is to set the configurations programmatically via set_env() and `eredis_cluster:connect/1`.
 
 ```erlang
 application:set_env(eredis_cluster, pool_size, 5),
@@ -80,7 +82,7 @@ eredis_cluster:connect([{"127.0.0.1", 30001},
 
 ### Configuring via API with extra options
 
-To enable TLS or to performance tune sockets use `eredis_cluster:connect/3` instead.
+To enable TLS or to performance tune sockets use `eredis_cluster:connect/2` instead.
 
 ```erlang
 Options = [{tls, [{cacertfile, "ca.crt"},
@@ -92,7 +94,7 @@ eredis_cluster:connect([{"127.0.0.1", 30001},
 
 #### Options description
 
-The following options are available via the proplist in `eredis_cluster:connect/3`
+The following options are available via the proplist in `eredis_cluster:connect/2`
 
 * `tls`: Enable TLS/SSL and use specified [TLSOptions](https://erlang.org/doc/man/ssl.html#type-client_option). Default: TLS not enabled.
 * `connect_timeout`: [Timeout](https://erlang.org/doc/man/gen_tcp.html#connect-4) when attempting to connect. Default: `5000` [ms]

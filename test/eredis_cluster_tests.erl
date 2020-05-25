@@ -3,11 +3,11 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(Setup, fun() -> eredis_cluster:start() end).
--define(Clearnup, fun(_) -> eredis_cluster:stop() end).
+-define(Cleanup, fun(_) -> eredis_cluster:stop() end).
 
 basic_test_() ->
     {inorder,
-        {setup, ?Setup, ?Clearnup,
+        {setup, ?Setup, ?Cleanup,
         [
             { "get and set",
             fun() ->
@@ -264,6 +264,22 @@ basic_test_() ->
                    ?assertEqual(ExpectedPool, eredis_cluster:get_pool_by_command(Cmd)),
 
                    ?assertEqual(ExpectedPool, eredis_cluster:get_pool_by_key(Key))
+           end
+         },
+
+         { "get cluster info with pool specified in response",
+           fun () ->
+                   Result = eredis_cluster:qa2(["CLUSTER", "SLOTS"]),
+                   ?assertMatch(none, proplists:lookup(error, Result)),
+                   ?assertMatch({_Pool, {ok, _}}, lists:last(Result))
+           end
+         },
+
+         { "get cluster info with pool specified in response, failing",
+           fun () ->
+                   Result = eredis_cluster:qa2(["GET", "qrs"]),
+                   ?assertMatch({error, _},
+                                proplists:lookup(error, [Res || {_Pool, Res} <- Result]))
            end
          }
       ]
