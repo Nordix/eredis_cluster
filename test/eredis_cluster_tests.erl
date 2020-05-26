@@ -211,7 +211,66 @@ basic_test_() ->
                    ?assertEqual(true, lists:member(Key2, StrKeys)),
                    ?assertEqual(false, lists:member(Key3, StrKeys))
            end
+         },
+
+         { "query all",
+           fun () ->
+                   %% Verify that qa() gives one response from each master
+                   MasterNodeList = get_master_nodes(),
+                   Result = eredis_cluster:qa(["DBSIZE"]),
+                   ?assertEqual(erlang:length(MasterNodeList), erlang:length(Result))
+           end
+         },
+
+         { "query all - after a resharding",
+           fun () ->
+                   %% Migrate a single slot to another node
+                   %% will result in a node with atleast 2 sets of slots
+                   Slot = 0,
+                   {SrcPool, _Vers} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+
+                   %% Get a node that is not handling this slot
+                   MasterNodeList = get_master_nodes(),
+                   {SrcNodeId, SrcPool} = lists:keyfind(SrcPool, 2, MasterNodeList),
+                   [{DstNodeId, DstPool}, _] = [{NI, P} || {NI, P} <- MasterNodeList,
+                                                          {NI, P} =/= {SrcNodeId, SrcPool}],
+
+                   %% Start the migration/resharding
+                   CmdImp = ["CLUSTER", "SETSLOT", Slot, "IMPORTING", DstNodeId],
+                   eredis_cluster:qw(DstPool, CmdImp),
+                   CmdMig = ["CLUSTER", "SETSLOT", Slot, "MIGRATING", SrcNodeId],
+                   eredis_cluster:qw(SrcPool, CmdMig),
+                   %% Skip the MIGRATE command in test
+                   CmdNode = ["CLUSTER", "SETSLOT", Slot, "NODE", DstNodeId],
+                   eredis_cluster:qa(CmdNode),
+
+                   %% Refresh the mapping since a migration will change it
+                   State = eredis_cluster_monitor:get_state(),
+                   Version = eredis_cluster_monitor:get_state_version(State),
+                   eredis_cluster_monitor:refresh_mapping(Version),
+
+                   Result = eredis_cluster:qa(["DBSIZE"]),
+                   ?assertEqual(erlang:length(MasterNodeList), erlang:length(Result))
+           end
          }
       ]
     }
 }.
+
+-spec get_master_nodes() -> [{NodeId::string(), PoolName::atom()}].
+get_master_nodes() ->
+    {ok, NodesInfo} = eredis_cluster:q(["CLUSTER", "NODES"]),
+    NodesInfoList = binary:split(NodesInfo, <<"\n">>, [global, trim]),
+    lists:foldl(fun(Node, Acc) ->
+                        NodeElem = binary:split(Node, <<" ">>, [global]),
+                        case lists:nth(3, NodeElem) of
+                            Role when Role == <<"myself,master">>;
+                                      Role == <<"master">> ->
+                                [Ip, Port, _] = binary:split(lists:nth(2, NodeElem),
+                                                             [<<":">>, <<"@">>], [global]),
+                                Pool = list_to_atom(binary_to_list(Ip) ++ "#" ++ binary_to_list(Port)),
+                                [{binary_to_list(lists:nth(1, NodeElem)), Pool} | Acc];
+                            _ ->
+                                Acc
+                        end
+                end, [], NodesInfoList).

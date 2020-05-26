@@ -57,8 +57,8 @@ get_state_version(State) ->
 get_all_pools() ->
     State = get_state(),
     SlotsMapList = tuple_to_list(State#state.slots_maps),
-    [SlotsMap#slots_map.node#node.pool || SlotsMap <- SlotsMapList,
-        SlotsMap#slots_map.node =/= undefined].
+    lists:usort([SlotsMap#slots_map.node#node.pool || SlotsMap <- SlotsMapList,
+                    SlotsMap#slots_map.node =/= undefined]).
 
 %% =============================================================================
 %% @doc Get cluster pool by slot. Optionally, a memoized State can be provided
