@@ -295,6 +295,26 @@ basic_test_() ->
                    ?assertMatch({error, _},
                                 proplists:lookup(error, [Res || {_Pool, Res} <- Result]))
            end
+         },
+
+         { "close connection",
+           fun () ->
+                   Key = "close:{1}:return",
+                   eredis_cluster:q_noreply(["set", Key, "test"]),
+
+                   AllPools = eredis_cluster_monitor:get_all_pools(),
+                   Slot = eredis_cluster:get_key_slot(Key),
+                   {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+
+                   ok = eredis_cluster:disconnect([Pool]),
+
+                   AllPoolsAfter = eredis_cluster_monitor:get_all_pools(),
+                   ?assertEqual([Pool], AllPools -- AllPoolsAfter),
+
+                   ?assertEqual({ok, <<"test">>}, eredis_cluster:q(["get", Key])),
+                   %% Slots Map has been refreshed during getting the key:
+                   ?assertEqual(AllPools, eredis_cluster_monitor:get_all_pools())
+           end
          }
       ]
     }

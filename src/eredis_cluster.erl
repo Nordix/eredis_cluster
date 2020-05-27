@@ -7,7 +7,7 @@
 -export([start/2, stop/1]).
 
 %% Management
--export([connect/1, connect/2]).
+-export([connect/1, connect/2, disconnect/1]).
 
 % Generic redis call
 -export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qa2/1, qw/2, qmn/1]).
@@ -63,6 +63,14 @@ connect(InitServers) ->
 -spec connect(InitServers::term(), Options::options()) -> Result::term().
 connect(InitServers, Options) ->
     eredis_cluster_monitor:connect(InitServers, Options).
+
+%% =============================================================================
+%% @doc Disconnect with a set of nodes.
+%% @end
+%% =============================================================================
+-spec disconnect(PoolNodes::term()) -> Result::term().
+disconnect(PoolNodes) ->
+    eredis_cluster_monitor:disconnect(PoolNodes).
 
 %% =============================================================================
 %% @doc This function execute simple or pipelined command on a single redis node

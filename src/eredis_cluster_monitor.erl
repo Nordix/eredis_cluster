@@ -3,7 +3,7 @@
 
 %% API.
 -export([start_link/0]).
--export([connect/2]).
+-export([connect/2, disconnect/1]).
 -export([refresh_mapping/1]).
 -export([get_state/0, get_state_version/1]).
 -export([get_pool_by_slot/1, get_pool_by_slot/2]).
@@ -21,11 +21,11 @@
 -include("eredis_cluster.hrl").
 
 -record(state, {
-    init_nodes :: 'undefined' | [#node{}],
-    slots      :: 'undefined' | tuple(), %% whose elements are integer indexes into slots_maps
-    slots_maps :: 'undefined' | tuple(), %% whose elements are #slots_map{}
-    node_options :: 'undefined' | options(),
-    version    :: 'undefined' | integer()
+    init_nodes   = [] :: [#node{}],
+    slots        = {} :: tuple(), %% whose elements are integer indexes into slots_maps
+    slots_maps   = {} :: tuple(), %% whose elements are #slots_map{}
+    node_options = [] :: options(),
+    version      = 0  :: integer()
 }).
 
 %% API.
@@ -35,6 +35,9 @@ start_link() ->
 
 connect(InitServers, Options) ->
     gen_server:call(?MODULE, {connect, InitServers, Options}).
+
+disconnect(PoolNodes) ->
+    gen_server:call(?MODULE, {disconnect, PoolNodes}).
 
 refresh_mapping(Version) ->
     gen_server:call(?MODULE, {reload_slots_map, Version}).
@@ -47,8 +50,12 @@ refresh_mapping(Version) ->
 
 -spec get_state() -> #state{}.
 get_state() ->
-    [{cluster_state, State}] = ets:lookup(?MODULE, cluster_state),
-    State.
+    case ets:lookup(?MODULE, cluster_state) of
+        [{cluster_state, State}] ->
+            State;
+        [] ->
+            #state{}
+    end.
 
 get_state_version(State) ->
     State#state.version.
@@ -68,12 +75,17 @@ get_all_pools() ->
 -spec get_pool_by_slot(Slot::integer(), State::#state{}) ->
     {PoolName::atom() | undefined, Version::integer()}.
 get_pool_by_slot(Slot, State) ->
-    Index = element(Slot + 1, State#state.slots),
-    Cluster = element(Index, State#state.slots_maps),
-    if
-        Cluster#slots_map.node =/= undefined ->
-            {Cluster#slots_map.node#node.pool, State#state.version};
-        true ->
+    try
+        Index = element(Slot + 1, State#state.slots),
+        Cluster = element(Index, State#state.slots_maps),
+        if
+            Cluster#slots_map.node =/= undefined ->
+                {Cluster#slots_map.node#node.pool, State#state.version};
+            true ->
+                {undefined, State#state.version}
+        end
+    catch
+        _:_ ->
             {undefined, State#state.version}
     end.
 
@@ -88,9 +100,8 @@ reload_slots_map(State) ->
     [close_connection(SlotsMap)
         || SlotsMap <- tuple_to_list(State#state.slots_maps)],
 
-    Options0 = State#state.node_options,
     Password = application:get_env(eredis_cluster, password, ""),
-    Options = Options0 ++ [{password, Password}],
+    Options = State#state.node_options ++ [{password, Password}],
 
     ClusterSlots = get_cluster_slots(State#state.init_nodes, Options),
 
@@ -155,7 +166,23 @@ parse_cluster_slots([[StartSlot, EndSlot | [[Address, Port | _] | _]] | T], Inde
 parse_cluster_slots([], _Index, Acc) ->
     lists:reverse(Acc).
 
-
+%%%------------------------------------------------------------
+-spec close_connection_with_nodes(SlotsMaps::[#slots_map{}],
+                                  Pools::[atom()]) -> [#slots_map{}].
+%%%
+%%% Close the connection related to specified Pool node.
+%%%------------------------------------------------------------
+close_connection_with_nodes(SlotsMaps, Pools) ->
+    lists:foldl(fun(Map, AccMap) ->
+                        case lists:member(Map#slots_map.node#node.pool,
+                                          Pools) of
+                            true ->
+                                close_connection(Map),
+                                AccMap;
+                            false ->
+                                [Map|AccMap]
+                        end
+                end, [], SlotsMaps).
 
 -spec close_connection(#slots_map{}) -> ok.
 close_connection(SlotsMap) ->
@@ -208,14 +235,34 @@ connect_([], _Options) ->
     #state{};
 connect_(InitNodes, Options) ->
     State = #state{
-        slots = undefined,
-        slots_maps = {},
         init_nodes = [#node{address = A, port = P} || {A, P} <- InitNodes],
-        version = 0,
         node_options = Options
     },
 
     reload_slots_map(State).
+
+-spec disconnect_([PoolNodes :: term()]) -> #state{}.
+disconnect_([]) ->
+    #state{};
+disconnect_(PoolNodes) ->
+    State = get_state(),
+    SlotsMaps = tuple_to_list(State#state.slots_maps),
+
+    Password = application:get_env(eredis_cluster, password, ""),
+    Options = State#state.node_options ++ [{password, Password}],
+
+    NewSlotsMaps = close_connection_with_nodes(SlotsMaps, PoolNodes),
+
+    ConnectedSlotsMaps = connect_all_slots(NewSlotsMaps, Options),
+    Slots = create_slots_cache(ConnectedSlotsMaps),
+
+    NewState = State#state{
+                 slots = list_to_tuple(Slots),
+                 slots_maps = list_to_tuple(ConnectedSlotsMaps),
+                 version = State#state.version + 1
+                },
+    true = ets:insert(?MODULE, [{cluster_state, NewState}]),
+    NewState.
 
 %% gen_server.
 
@@ -231,6 +278,8 @@ handle_call({reload_slots_map, _}, _From, State) ->
     {reply, ok, State};
 handle_call({connect, InitServers, Options}, _From, _State) ->
     {reply, ok, connect_(InitServers, Options)};
+handle_call({disconnect, PoolNodes}, _From, _State) ->
+    {reply, ok, disconnect_(PoolNodes)};
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 
