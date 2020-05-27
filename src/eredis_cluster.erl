@@ -21,6 +21,7 @@
 -export([update_hash_field/3]).
 -export([optimistic_locking_transaction/3]).
 -export([eval/4]).
+-export([get_pool_by_command/1, get_pool_by_key/1]).
 
 -ifdef(TEST).
 -export([get_key_slot/1]).
@@ -447,6 +448,25 @@ eval(Script, ScriptHash, Keys, Args) ->
         Result ->
             Result
     end.
+
+%% =============================================================================
+%% @doc Returns the pool for a command.
+%% @end
+%% =============================================================================
+get_pool_by_command(Command) ->
+    Key = get_key_from_command(Command),
+    Slot = get_key_slot(Key),
+    {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+    Pool.
+
+%% =============================================================================
+%% @doc Returns the pool for a key.
+%% @end
+%% =============================================================================
+get_pool_by_key(Key) ->
+    Slot = get_key_slot(Key),
+    {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+    Pool.
 
 %% =============================================================================
 %% @doc Return the hash slot from the key

@@ -252,6 +252,19 @@ basic_test_() ->
                    Result = eredis_cluster:qa(["DBSIZE"]),
                    ?assertEqual(erlang:length(MasterNodeList), erlang:length(Result))
            end
+         },
+
+         { "get pool by command and by key",
+           fun () ->
+                   Key = "{2}:test",
+                   Cmd = ["keys", Key],
+                   KeySlot = eredis_cluster:get_key_slot(Key),
+                   {ExpectedPool, _Version} = eredis_cluster_monitor:get_pool_by_slot(KeySlot),
+
+                   ?assertEqual(ExpectedPool, eredis_cluster:get_pool_by_command(Cmd)),
+
+                   ?assertEqual(ExpectedPool, eredis_cluster:get_pool_by_key(Key))
+           end
          }
       ]
     }
