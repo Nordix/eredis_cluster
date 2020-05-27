@@ -1,6 +1,7 @@
 -module(eredis_cluster_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("eredis_cluster.hrl").
 
 -define(Setup, fun() -> eredis_cluster:start() end).
 -define(Clearnup, fun(_) -> eredis_cluster:stop() end).
@@ -218,6 +219,7 @@ basic_test_() ->
                    %% Verify that qa() gives one response from each master
                    MasterNodeList = get_master_nodes(),
                    Result = eredis_cluster:qa(["DBSIZE"]),
+                   ?assertEqual(none, proplists:lookup(error, Result)),
                    ?assertEqual(erlang:length(MasterNodeList), erlang:length(Result))
            end
          },
@@ -233,24 +235,36 @@ basic_test_() ->
                    MasterNodeList = get_master_nodes(),
                    {SrcNodeId, SrcPool} = lists:keyfind(SrcPool, 2, MasterNodeList),
                    [{DstNodeId, DstPool}, _] = [{NI, P} || {NI, P} <- MasterNodeList,
-                                                          {NI, P} =/= {SrcNodeId, SrcPool}],
+                                                           {NI, P} =/= {SrcNodeId, SrcPool}],
 
                    %% Start the migration/resharding
-                   CmdImp = ["CLUSTER", "SETSLOT", Slot, "IMPORTING", DstNodeId],
-                   eredis_cluster:qw(DstPool, CmdImp),
-                   CmdMig = ["CLUSTER", "SETSLOT", Slot, "MIGRATING", SrcNodeId],
-                   eredis_cluster:qw(SrcPool, CmdMig),
-                   %% Skip the MIGRATE command in test
+                   CmdImp = ["CLUSTER", "SETSLOT", Slot, "IMPORTING", SrcNodeId],
+                   ?assertMatch({ok, _}, q_pool(DstPool, CmdImp)),
+                   CmdMig = ["CLUSTER", "SETSLOT", Slot, "MIGRATING", DstNodeId],
+                   ?assertMatch({ok, _}, q_pool(SrcPool, CmdMig)),
+
+                   %% Make sure no keys needs to be migrated using the MIGRATE command
+                   CmdKeys = ["CLUSTER", "GETKEYSINSLOT", Slot, "10"],
+                   ?assertMatch({ok, []}, q_pool(SrcPool, CmdKeys)),
+
+                   %% Finalize the migration
                    CmdNode = ["CLUSTER", "SETSLOT", Slot, "NODE", DstNodeId],
-                   eredis_cluster:qa(CmdNode),
+                   Result = eredis_cluster:qa(CmdNode),
+                   ?assertEqual(none, proplists:lookup(error, Result)),
 
-                   %% Refresh the mapping since a migration will change it
-                   State = eredis_cluster_monitor:get_state(),
-                   Version = eredis_cluster_monitor:get_state_version(State),
-                   eredis_cluster_monitor:refresh_mapping(Version),
+                   %% Make sure we now have more ranges of slots than master nodes
+                   {ok, Ranges} = q_pool(DstPool, ["CLUSTER", "SLOTS"]),
+                   ?assertNotEqual(erlang:length(MasterNodeList), erlang:length(Ranges)),
 
-                   Result = eredis_cluster:qa(["DBSIZE"]),
-                   ?assertEqual(erlang:length(MasterNodeList), erlang:length(Result))
+                   %% Make sure we only get one answer per master
+                   SizeResult = eredis_cluster:qa(["DBSIZE"]),
+                   ?assertEqual(none, proplists:lookup(error, SizeResult)),
+                   ?assertEqual(erlang:length(MasterNodeList), erlang:length(SizeResult)),
+
+                   %% Cleanup, "revert" the migration
+                   CmdRevert = ["CLUSTER", "SETSLOT", Slot, "NODE", SrcNodeId],
+                   RevertResult = eredis_cluster:qa(CmdRevert),
+                   ?assertEqual(none, proplists:lookup(error, RevertResult))
            end
          },
 
@@ -287,3 +301,8 @@ get_master_nodes() ->
                                 Acc
                         end
                 end, [], NodesInfoList).
+
+-spec q_pool(PoolName::atom(), Command::redis_command()) -> redis_result().
+q_pool(PoolName, Command) ->
+    Transaction = fun(Worker) -> eredis_cluster:qw(Worker, Command) end,
+    eredis_cluster_pool:transaction(PoolName, Transaction).
