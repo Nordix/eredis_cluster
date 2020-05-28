@@ -103,19 +103,42 @@ qp(Commands) -> q(Commands).
 
 %% =============================================================================
 %% @doc Perform a given query on all node of a redis cluster
+%% When a query to a master fail refresh the mapping and try again.
 %% @end
 %% =============================================================================
 -spec qa(redis_command()) -> [redis_transaction_result()].
-qa(Command) ->
+qa(Command) -> qa(Command, 0, []).
+
+qa(_, ?REDIS_CLUSTER_REQUEST_TTL, Res) ->
+    case Res of
+        [] -> {error, no_connection};
+        _  -> Res
+    end;
+qa(Command, Counter, Res) ->
+    throttle_retries(Counter),
+
+    State = eredis_cluster_monitor:get_state(),
+    Version = eredis_cluster_monitor:get_state_version(State),
     Pools = eredis_cluster_monitor:get_all_pools(),
-    Transaction = fun(Worker) -> qw(Worker, Command) end,
-    [eredis_cluster_pool:transaction(Pool, Transaction) || Pool <- Pools].
+    case Pools of
+        [] ->
+            eredis_cluster_monitor:refresh_mapping(Version),
+            qa(Command, Counter + 1, Res);
+        _ ->
+            Transaction = fun(Worker) -> qw(Worker, Command) end,
+            Results = [eredis_cluster_pool:transaction(Pool, Transaction) ||
+                         Pool <- Pools],
+            case handle_transaction_result(Results, Version)
+            of
+                retry  -> qa(Command, Counter + 1, Results);
+                Result -> Result
+            end
+    end.
 
 %% =============================================================================
 %% @doc Perform a given query on all master nodes of a redis cluster and
 %% return result with master node reference in result.
-%% When connection to master failed then do refresh mapping and try again to
-%% query.
+%% When a query to the master fail refresh the mapping and try again.
 %% @end
 %% =============================================================================
 -spec qa2(redis_command()) -> [{atom(), redis_result()}] | {error, no_connection}.
@@ -177,7 +200,12 @@ qw_noreply(Worker, Command) ->
 -spec transaction(redis_pipeline_command()) -> redis_transaction_result().
 transaction(Commands) ->
     Result = q([["multi"]| Commands] ++ [["exec"]]),
-    lists:last(Result).
+    case is_list(Result) of
+        true ->
+            lists:last(Result);
+        false ->
+             Result %% Like {error, no_connection}
+    end.
 
 %% =============================================================================
 %% @doc Multi node query
@@ -244,12 +272,13 @@ transaction(Transaction, Slot, ExpectedValue, Counter) ->
 %% =============================================================================
 -spec flushdb() -> ok | {error, Reason::bitstring()}.
 flushdb() ->
-    Result = qa(["FLUSHDB"]),
-    case proplists:lookup(error, Result) of
-        none ->
-            ok;
-        Error ->
-            Error
+    case qa(["FLUSHDB"]) of
+        Result when is_list(Result) ->
+            case proplists:lookup(error, Result) of
+                none  -> ok;
+                Error -> Error
+            end;
+        Result -> Result
     end.
 
 %% =============================================================================
@@ -358,6 +387,11 @@ query(Transaction, Slot, Counter) ->
         Result -> Result
     end.
 
+handle_transaction_result(Result, Version) when is_list(Result) ->
+    case proplists:lookup(error, Result) of
+        none        -> Result;
+        ErrorResult -> handle_transaction_result(ErrorResult, Version)
+    end;
 handle_transaction_result(Result, Version) ->
     case Result of
        % If we detect a node went down, we should probably refresh the slot

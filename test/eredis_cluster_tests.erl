@@ -49,7 +49,8 @@ basic_test_() ->
 
             { "pipeline",
             fun () ->
-                ?assertNotMatch([{ok, _},{ok, _},{ok, _}], eredis_cluster:qp([["SET", "a1", "aaa"], ["SET", "a2", "aaa"], ["SET", "a3", "aaa"]])),
+                %% All query-parts needs to be for the same node
+                ?assertMatch({error, no_connection}, eredis_cluster:qp([["SET", "a1", "aaa"], ["SET", "a2", "aaa"], ["SET", "a3", "aaa"]])),
                 ?assertMatch([{ok, _},{ok, _},{ok, _}], eredis_cluster:qp([["LPUSH", "a", "aaa"], ["LPUSH", "a", "bbb"], ["LPUSH", "a", "ccc"]]))
             end
             },
@@ -140,7 +141,7 @@ basic_test_() ->
                 eredis_cluster:q(["set", "zyx", "test"]),
                 eredis_cluster:q(["set", "zyxw", "test"]),
                 eredis_cluster:q(["set", "zyxwv", "test"]),
-                eredis_cluster:flushdb(),
+                ?assertEqual(ok, eredis_cluster:flushdb()),
                 ?assertEqual({ok, undefined}, eredis_cluster:q(["GET", "zyx"])),
                 ?assertEqual({ok, undefined}, eredis_cluster:q(["GET", "zyxw"])),
                 ?assertEqual({ok, undefined}, eredis_cluster:q(["GET", "zyxwv"]))
@@ -221,6 +222,16 @@ basic_test_() ->
                    Result = eredis_cluster:qa(["DBSIZE"]),
                    ?assertEqual(none, proplists:lookup(error, Result)),
                    ?assertEqual(erlang:length(MasterNodeList), erlang:length(Result))
+           end
+         },
+
+         { "query all - failing",
+           fun () ->
+                   %% Only one node will give ok, others will fail
+                   Result = eredis_cluster:qa(["set", "Key1", "test"]),
+                   ?assertMatch({ok,    <<"OK">>}, proplists:lookup(ok, Result)),
+                   ?assertMatch({error, <<"MOVED", _/binary>>},
+                                proplists:lookup(error, Result))
            end
          },
 
@@ -311,7 +322,7 @@ basic_test_() ->
                    AllPoolsAfter = eredis_cluster_monitor:get_all_pools(),
                    ?assertEqual([Pool], AllPools -- AllPoolsAfter),
 
-                   ?assertEqual({ok, <<"test">>}, eredis_cluster:q(["get", Key])),
+                   ?assertMatch({ok, _}, eredis_cluster:q(["get", Key])),
                    %% Slots Map has been refreshed during getting the key:
                    ?assertEqual(AllPools, eredis_cluster_monitor:get_all_pools())
            end
