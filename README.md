@@ -8,25 +8,27 @@ Improvements compared to `adrienmo/eredis_cluster`:
 
 * Support of TLS introduced in Redis 6
 * Uses Nordix/eredis
-* Added `eredis_cluster:connect/2` that takes a proplist with options
 * Many Dialyzer corrections
 * Elvis code formatting
 * Containerized testing
 * Added APIs:
-  - qa2/1                 - query all nodes with re-attempts, returns [{Node, Result},..]
-  - q_noreply/1           - query a single Redis instance but wont wait for its result
-  - load_script/1         - pre-load script to all Redis instances
-  - scan/4                - Perform a scan command on given Redis instance
-  - disconnect/1          - disconnect from given Redis instances
-  - get_pool_by_command/1 - get which Redis pool that handles a given command
-  - get_pool_by_key/1     - get which Redis pool that handles a given key
+  - `connect/2`             - Connect to init nodes, with options
+  - `qa2/1`                 - query all nodes with re-attempts, returns [{Node, Result},..]
+  - `q_noreply/1`           - query a single Redis instance but wont wait for its result
+  - `load_script/1`         - pre-load script to all Redis instances
+  - `scan/4`                - Perform a scan command on given Redis instance
+  - `disconnect/1`          - disconnect from given Redis instances
+  - `get_pool_by_command/1` - get which Redis pool that handles a given command
+  - `get_pool_by_key/1`     - get which Redis pool that handles a given key
+* Changed behaviour:
+  - `qa/1`                  - query all nodes, now with re-attempts
 
 ## TODO
 
 - Correct last Dialyzer warnings
 - Improve test coverage
 - Improve test suite to demonstrate the case where Redis cluster is crashing,
-resharding, recovering...
+  resharding, recovering...
 
 ## Compilation and tests
 
