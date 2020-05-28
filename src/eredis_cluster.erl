@@ -103,42 +103,19 @@ qp(Commands) -> q(Commands).
 
 %% =============================================================================
 %% @doc Perform a given query on all node of a redis cluster
-%% When a query to a master fail refresh the mapping and try again.
 %% @end
 %% =============================================================================
 -spec qa(redis_command()) -> [redis_transaction_result()].
-qa(Command) -> qa(Command, 0, []).
-
-qa(_, ?REDIS_CLUSTER_REQUEST_TTL, Res) ->
-    case Res of
-        [] -> {error, no_connection};
-        _  -> Res
-    end;
-qa(Command, Counter, Res) ->
-    throttle_retries(Counter),
-
-    State = eredis_cluster_monitor:get_state(),
-    Version = eredis_cluster_monitor:get_state_version(State),
+qa(Command) ->
     Pools = eredis_cluster_monitor:get_all_pools(),
-    case Pools of
-        [] ->
-            eredis_cluster_monitor:refresh_mapping(Version),
-            qa(Command, Counter + 1, Res);
-        _ ->
-            Transaction = fun(Worker) -> qw(Worker, Command) end,
-            Result = [eredis_cluster_pool:transaction(Pool, Transaction) ||
-                         Pool <- Pools],
-            case handle_transaction_result(Result, Version)
-            of
-                retry  -> qa(Command, Counter + 1, Result);
-                Result -> Result
-            end
-    end.
+    Transaction = fun(Worker) -> qw(Worker, Command) end,
+    [eredis_cluster_pool:transaction(Pool, Transaction) || Pool <- Pools].
 
 %% =============================================================================
 %% @doc Perform a given query on all master nodes of a redis cluster and
 %% return result with master node reference in result.
-%% When a query to the master fail refresh the mapping and try again.
+%% When connection to master failed then do refresh mapping and try again to
+%% query.
 %% @end
 %% =============================================================================
 -spec qa2(redis_command()) -> [{atom(), redis_result()}] | {error, no_connection}.
