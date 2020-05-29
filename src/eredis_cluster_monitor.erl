@@ -43,12 +43,6 @@ disconnect(PoolNodes) ->
 refresh_mapping(Version) ->
     gen_server:call(?MODULE, {reload_slots_map, Version}).
 
-%% =============================================================================
-%% @doc Given a slot return the link (Redis instance) to the mapped
-%% node.
-%% @end
-%% =============================================================================
-
 -spec get_state() -> #state{}.
 get_state() ->
     case ets:lookup(?MODULE, cluster_state) of
@@ -73,6 +67,12 @@ get_all_pools() ->
 %% to prevent from querying ets inside loops.
 %% @end
 %% =============================================================================
+-spec get_pool_by_slot(Slot::integer()) ->
+    {PoolName::atom() | undefined, Version::integer()}.
+get_pool_by_slot(Slot) ->
+    State = get_state(),
+    get_pool_by_slot(Slot, State).
+
 -spec get_pool_by_slot(Slot::integer(), State::#state{}) ->
     {PoolName::atom() | undefined, Version::integer()}.
 get_pool_by_slot(Slot, State) ->
@@ -90,26 +90,34 @@ get_pool_by_slot(Slot, State) ->
             {undefined, State#state.version}
     end.
 
--spec get_pool_by_slot(Slot::integer()) ->
-    {PoolName::atom() | undefined, Version::integer()}.
-get_pool_by_slot(Slot) ->
-    State = get_state(),
-    get_pool_by_slot(Slot, State).
-
+%% =============================================================================
+%% @doc Connect to a init node and get the slot distribution of nodes.
+%% @end
+%% =============================================================================
 -spec reload_slots_map(State::#state{}) -> NewState::#state{}.
 reload_slots_map(State) ->
-    [close_connection(SlotsMap)
-        || SlotsMap <- tuple_to_list(State#state.slots_maps)],
+    OldSlotsMaps = tuple_to_list(State#state.slots_maps),
 
     Password = application:get_env(eredis_cluster, password, ""),
     Options = State#state.node_options ++ [{password, Password}],
-
     ClusterSlots = get_cluster_slots(State#state.init_nodes, Options),
-    SlotsMaps = parse_cluster_slots(ClusterSlots),
+    NewSlotsMaps = parse_cluster_slots(ClusterSlots),
 
-    ConnectedSlotsMaps = connect_all_slots(SlotsMaps, Options),
+    %% Find old slots_maps with nodes still in use.
+    CommonInOldMap = lists:flatmap(
+                       fun(#slots_map{node = Node} = OldElem) ->
+                               [OldElem || Elem <- NewSlotsMaps,
+                                           Elem#slots_map.node#node.address == Node#node.address,
+                                           Elem#slots_map.node#node.port == Node#node.port]
+                       end, OldSlotsMaps),
+
+    %% Disconnect non-used nodes
+    RemovedFromOldMap = remove_list_elements(OldSlotsMaps, CommonInOldMap),
+    [close_connection(SlotsMap) || SlotsMap <- RemovedFromOldMap],
+
+    %% Connect to new nodes
+    ConnectedSlotsMaps = connect_all_slots(NewSlotsMaps, Options),
     Slots = create_slots_cache(ConnectedSlotsMaps),
-
     NewState = State#state{
         slots = list_to_tuple(Slots),
         slots_maps = list_to_tuple(ConnectedSlotsMaps),
@@ -119,6 +127,16 @@ reload_slots_map(State) ->
     true = ets:insert(?MODULE, [{cluster_state, NewState}]),
 
     NewState.
+
+%% =============================================================================
+%% @doc Removes all elements (including duplicates) of Ys from Xs.
+%% Xs and Ys can be unordered and contain duplicates.
+%% @end
+%% =============================================================================
+-spec remove_list_elements(Xs::[term()], Ys::[term()]) -> [term()].
+remove_list_elements(Xs, Ys) ->
+    Set = gb_sets:from_list(Ys),
+    [E || E <- Xs, not gb_sets:is_element(E, Set)].
 
 %% =============================================================================
 %% @doc Get cluster slots information.
@@ -282,12 +300,13 @@ connect_all_slots(SlotsMapList, Options) ->
 connect_([], _Options) ->
     #state{};
 connect_(InitNodes, Options) ->
-    State = #state{
+    State = get_state(),
+    NewState = State#state{
         init_nodes = [#node{address = A, port = P} || {A, P} <- InitNodes],
         node_options = Options
     },
 
-    reload_slots_map(State).
+    reload_slots_map(NewState).
 
 -spec disconnect_([PoolNodes :: term()]) -> #state{}.
 disconnect_([]) ->

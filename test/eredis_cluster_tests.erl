@@ -340,6 +340,42 @@ basic_test_() ->
                    ClusterSlots = eredis_cluster_monitor:get_cluster_slots(),
                    ?assertNotEqual(0, erlang:length(ClusterSlots))
            end
+         },
+
+         { "Failover disconnects previous masters",
+           fun () ->
+                   %% Make sure a key exists
+                   ?assertEqual({ok, <<"OK">>}, eredis_cluster:q(["SET", "key55", "value"])),
+                   ?assertEqual({ok, <<"value">>}, eredis_cluster:q(["GET","key55"])),
+
+                   %% Check that exisiting master pool-processes exists
+                   MasterNodesBefore = get_master_nodes(),
+                   lists:foreach(fun({_NodeId, PoolName}) ->
+                                         ?assertNotEqual(undefined, whereis(PoolName))
+                                 end, MasterNodesBefore),
+
+                   %% Tell all slaves/replicas to start manual failover, i.e. be masters
+                   SlaveNodeList = get_slave_nodes(),
+                   lists:foreach(fun({_Id, Ip, Port}) ->
+                                 {ok, C} = eredis:start_link(binary_to_list(Ip), binary_to_integer(Port)),
+                                 {ok, _} = eredis:q(C, ["CLUSTER", "FAILOVER"]),
+                                 timer:sleep(200),
+                                 eredis:stop(C)
+                               end, SlaveNodeList),
+
+                   %% Wait for stabilisation
+                   timer:sleep(1000),
+
+                   %% Make sure the key still exists
+                   ?assertEqual({ok, <<"value">>}, eredis_cluster:q(["GET","key55"])),
+
+                   %% Make sure previous master pool-processes are shut down
+                   lists:foreach(fun({_NodeId, PoolName}) ->
+                                         ?assertEqual(undefined, whereis(PoolName))
+                                 end, MasterNodesBefore)
+
+           end
+
          }
       ]
     }
@@ -356,6 +392,21 @@ get_master_nodes() ->
                                                              [<<":">>, <<"@">>], [global]),
                                 Pool = list_to_atom(binary_to_list(Ip) ++ "#" ++ binary_to_list(Port)),
                                 [{binary_to_list(lists:nth(1, Node)), Pool} | Acc];
+                            _ ->
+                                Acc
+                        end
+                end, [], ClusterNodesInfo).
+
+-spec get_slave_nodes() -> [{NodeId::string(), Ip::string(), Port::string()}].
+get_slave_nodes() ->
+    ClusterNodesInfo = eredis_cluster_monitor:get_cluster_nodes(),
+    lists:foldl(fun(Node, Acc) ->
+                        case lists:nth(3, Node) of %% <flags>
+                            Role when Role == <<"myself,slave">>;
+                                      Role == <<"slave">> ->
+                                [Ip, Port, _] = binary:split(lists:nth(2, Node), %% <ip:port@cport>
+                                                             [<<":">>, <<"@">>], [global]),
+                                [{binary_to_list(lists:nth(1, Node)), Ip, Port} | Acc];
                             _ ->
                                 Acc
                         end
