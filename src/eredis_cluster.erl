@@ -394,22 +394,41 @@ handle_transaction_result(Result, Version) when is_list(Result) ->
     end;
 handle_transaction_result(Result, Version) ->
     case Result of
-       % If we detect a node went down, we should probably refresh the slot
-        % mapping.
+        %% If we detect a node went down, we should probably refresh
+        %% the slot mapping.
         {error, no_connection} ->
             eredis_cluster_monitor:refresh_mapping(Version),
             retry;
 
-        % If the tcp connection is closed (connection timeout), the redis worker
-        % will try to reconnect, thus the connection should be recovered for
-        % the next request. We don't need to refresh the slot mapping in this
-        % case
+        %% If the tcp connection is closed (connection timeout), the redis worker
+        %% will try to reconnect, thus the connection should be recovered for
+        %% the next request. We don't need to refresh the slot mapping in this
+        %% case
         {error, tcp_closed} ->
             retry;
 
-        % Redis explicitly say our slot mapping is incorrect, we need to refresh
-        % it
+        %% Other TCP issues
+        %% See reasons: https://erlang.org/doc/man/inet.html#type-posix
+        {error, Reason} when is_atom(Reason) ->
+            eredis_cluster_monitor:refresh_mapping(Version),
+            retry;
+
+        %% Redis explicitly say our slot mapping is incorrect,
+        %% we need to refresh it
         {error, <<"MOVED ", _/binary>>} ->
+            eredis_cluster_monitor:refresh_mapping(Version),
+            retry;
+
+        %% Migration ongoing
+        {error, <<"ASK ", _/binary>>} ->
+            retry;
+
+        %% Resharding ongoing, only partial keys exists
+        {error, <<"TRYAGAIN ", _/binary>>} ->
+            retry;
+
+        %% Hash not served, can be triggered temporary due to resharding
+        {error, <<"CLUSTERDOWN ", _/binary>>} ->
             eredis_cluster_monitor:refresh_mapping(Version),
             retry;
 
