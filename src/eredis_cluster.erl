@@ -228,7 +228,7 @@ qmn(Commands, Counter) ->
 qmn2([{Pool, PoolCommands} | T1], [{Pool, Mapping} | T2], Acc, Version) ->
     Transaction = fun(Worker) -> qw(Worker, PoolCommands) end,
     Result = eredis_cluster_pool:transaction(Pool, Transaction),
-    case handle_transaction_result(Result, Version, check_pipeline_result) of
+    case handle_transaction_result(Result, Version) of
         retry -> retry;
         Res ->
             MappedRes = lists:zip(Mapping, Res),
@@ -434,22 +434,6 @@ handle_transaction_result(Result, Version) ->
 
         Payload ->
             Payload
-    end.
-
-handle_transaction_result(Result, Version, check_pipeline_result) ->
-    case handle_transaction_result(Result, Version) of
-       retry -> retry;
-       Payload when is_list(Payload) ->
-           Pred = fun({error, <<"MOVED ", _/binary>>}) -> true;
-                    (_) -> false
-                 end,
-           case lists:any(Pred, Payload) of
-               false -> Payload;
-               true ->
-                   eredis_cluster_monitor:refresh_mapping(Version),
-                   retry
-           end;
-       Payload -> Payload
     end.
 
 -spec throttle_retries(integer()) -> ok.
