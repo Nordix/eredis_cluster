@@ -8,6 +8,7 @@
 -export([get_state/0, get_state_version/1]).
 -export([get_pool_by_slot/1, get_pool_by_slot/2]).
 -export([get_all_pools/0]).
+-export([get_cluster_slots/0, get_cluster_nodes/0]).
 
 %% gen_server.
 -export([init/1]).
@@ -104,8 +105,8 @@ reload_slots_map(State) ->
     Options = State#state.node_options ++ [{password, Password}],
 
     ClusterSlots = get_cluster_slots(State#state.init_nodes, Options),
-
     SlotsMaps = parse_cluster_slots(ClusterSlots),
+
     ConnectedSlotsMaps = connect_all_slots(SlotsMaps, Options),
     Slots = create_slots_cache(ConnectedSlotsMaps),
 
@@ -119,27 +120,74 @@ reload_slots_map(State) ->
 
     NewState.
 
--spec get_cluster_slots([#node{}], options()) -> [[bitstring() | [bitstring()]]].
-get_cluster_slots([], _Options) ->
-    throw({error, cannot_connect_to_cluster});
-get_cluster_slots([Node|T], Options) ->
+%% =============================================================================
+%% @doc Get cluster slots information.
+%% @end
+%% =============================================================================
+-spec get_cluster_slots() -> [[bitstring() | [bitstring()]]].
+get_cluster_slots() ->
+    State = get_state(),
+    Password = application:get_env(eredis_cluster, password, ""),
+    Options = State#state.node_options ++ [{password, Password}],
+    get_cluster_slots(State#state.init_nodes, Options).
+
+get_cluster_slots(InitNodes, Options) ->
+    Query = ["CLUSTER", "SLOTS"],
+    FailFn = fun(Node) -> get_cluster_slots_from_single_node(Node) end,
+    get_cluster_info(InitNodes, Options, Query, FailFn, []).
+
+%% =============================================================================
+%% @doc Get cluster nodes information.
+%% Returns a list of node elements, each in the form:
+%% [id, ip:port@cport, flags, master, ping-sent, pong-recv, config-epoch, link-state, <slot>, ...<slot>]
+%%
+%% See: https://redis.io/commands/cluster-nodes#serialization-format
+%% @end
+%% =============================================================================
+-spec get_cluster_nodes() -> [[bitstring()]].
+get_cluster_nodes() ->
+    State = get_state(),
+    Password = application:get_env(eredis_cluster, password, ""),
+    Options = State#state.node_options ++ [{password, Password}],
+    get_cluster_nodes(State#state.init_nodes, Options).
+
+-spec get_cluster_nodes([#node{}], options()) -> [[bitstring()]].
+get_cluster_nodes(InitNodes, Options) ->
+    Query = ["CLUSTER", "NODES"],
+    FailFn = fun(_Node) -> "" end, %% No default data to use when query fails
+    ClusterNodes = get_cluster_info(InitNodes, Options, Query, FailFn, []),
+    %% Parse result into list of element lists
+    NodesInfoList = binary:split(ClusterNodes, <<"\n">>, [global, trim]),
+    lists:foldl(fun(Node, Acc) ->
+                        Acc ++ [binary:split(Node, <<" ">>, [global, trim])]
+                end, [], NodesInfoList).
+
+%% =============================================================================
+%% @doc Generic function to do cluster information requests to a init node
+%% @end
+%% =============================================================================
+get_cluster_info([], _Options, _Query, _FailFn, ErrorList) ->
+    throw({error, {cannot_connect_to_cluster, ErrorList}});
+get_cluster_info([Node|T], Options, Query, FailFn, ErrorList) ->
     case safe_eredis_start_link(Node#node.address, Node#node.port, Options) of
         {ok, Connection} ->
-          case eredis:q(Connection, ["CLUSTER", "SLOTS"]) of
-            {error, <<"ERR unknown command 'CLUSTER'">>} ->
-                get_cluster_slots_from_single_node(Node);
-            {error, <<"ERR This instance has cluster support disabled">>} ->
-                get_cluster_slots_from_single_node(Node);
-            {ok, ClusterInfo} ->
-                eredis:stop(Connection),
-                ClusterInfo;
-            _ ->
-                eredis:stop(Connection),
-                get_cluster_slots(T, Options)
-        end;
-        _ ->
-            get_cluster_slots(T, Options)
-  end.
+            try
+                case eredis:q(Connection, Query) of
+                    {error, <<"ERR unknown command 'CLUSTER'">>} ->
+                        FailFn(Node);
+                    {error, <<"ERR This instance has cluster support disabled">>} ->
+                        FailFn(Node);
+                    {ok, ClusterInfo} ->
+                        ClusterInfo;
+                    Reason ->
+                        get_cluster_info(T, Options, Query, FailFn, [{Node, Reason} | ErrorList])
+                end
+            after
+                eredis:stop(Connection)
+            end;
+        Reason ->
+            get_cluster_info(T, Options, Query, FailFn, [{Node, Reason} | ErrorList])
+    end.
 
 -spec get_cluster_slots_from_single_node(#node{}) ->
     [[bitstring() | [bitstring()]]].

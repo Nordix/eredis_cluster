@@ -20,13 +20,17 @@ Improvements compared to `adrienmo/eredis_cluster`:
   - `disconnect/1`          - disconnect from given Redis instances
   - `get_pool_by_command/1` - get which Redis pool that handles a given command
   - `get_pool_by_key/1`     - get which Redis pool that handles a given key
+  - `get_cluster_nodes/0`   - get cluster nodes information list (CLUSTER NODES)
+  - `get_cluster_slots/0`   - get cluster slots information (CLUSTER SLOTS)
 * Changed behaviour:
   - `qa/1`                  - query all nodes, now with re-attempts
+  - `get_cluster_slots/2`   - Gives descriptive errors when failing
 
 ## TODO
 
 - Correct last Dialyzer warnings
 - Improve test coverage
+- `get_cluster_slots/2`, throw a reply?, improve tests
 - Improve test suite to demonstrate the case where Redis cluster is crashing,
   resharding, recovering...
 

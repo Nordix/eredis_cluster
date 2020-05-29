@@ -326,6 +326,20 @@ basic_test_() ->
                    %% Slots Map has been refreshed during getting the key:
                    ?assertEqual(AllPools, eredis_cluster_monitor:get_all_pools())
            end
+         },
+
+         { "get cluster nodes",
+           fun () ->
+                   ClusterNodes = eredis_cluster_monitor:get_cluster_nodes(),
+                   ?assertNotEqual(0, erlang:length(ClusterNodes))
+           end
+         },
+
+         { "get cluster slots",
+           fun () ->
+                   ClusterSlots = eredis_cluster_monitor:get_cluster_slots(),
+                   ?assertNotEqual(0, erlang:length(ClusterSlots))
+           end
          }
       ]
     }
@@ -333,21 +347,19 @@ basic_test_() ->
 
 -spec get_master_nodes() -> [{NodeId::string(), PoolName::atom()}].
 get_master_nodes() ->
-    {ok, NodesInfo} = eredis_cluster:q(["CLUSTER", "NODES"]),
-    NodesInfoList = binary:split(NodesInfo, <<"\n">>, [global, trim]),
+    ClusterNodesInfo = eredis_cluster_monitor:get_cluster_nodes(),
     lists:foldl(fun(Node, Acc) ->
-                        NodeElem = binary:split(Node, <<" ">>, [global]),
-                        case lists:nth(3, NodeElem) of
+                        case lists:nth(3, Node) of %% <flags>
                             Role when Role == <<"myself,master">>;
                                       Role == <<"master">> ->
-                                [Ip, Port, _] = binary:split(lists:nth(2, NodeElem),
+                                [Ip, Port, _] = binary:split(lists:nth(2, Node), %% <ip:port@cport>
                                                              [<<":">>, <<"@">>], [global]),
                                 Pool = list_to_atom(binary_to_list(Ip) ++ "#" ++ binary_to_list(Port)),
-                                [{binary_to_list(lists:nth(1, NodeElem)), Pool} | Acc];
+                                [{binary_to_list(lists:nth(1, Node)), Pool} | Acc];
                             _ ->
                                 Acc
                         end
-                end, [], NodesInfoList).
+                end, [], ClusterNodesInfo).
 
 -spec q_pool(PoolName::atom(), Command::redis_command()) -> redis_result().
 q_pool(PoolName, Command) ->
