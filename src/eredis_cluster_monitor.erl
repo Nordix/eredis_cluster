@@ -23,11 +23,12 @@
 
 -record(state, {
     init_nodes   = [] :: [#node{}],
-    slots        = {} :: tuple(), %% whose elements are integer indexes into slots_maps
     slots_maps   = {} :: tuple(), %% whose elements are #slots_map{}
     node_options = [] :: options(),
     version      = 0  :: integer()
 }).
+
+-define(SLOTS, eredis_cluster_monitor_slots).
 
 %% API.
 -spec start_link() -> {ok, pid()}.
@@ -77,7 +78,7 @@ get_pool_by_slot(Slot) ->
     {PoolName::atom() | undefined, Version::integer()}.
 get_pool_by_slot(Slot, State) ->
     try
-        Index = element(Slot + 1, State#state.slots),
+        [{_, Index}] = ets:lookup(?SLOTS, Slot),
         Cluster = element(Index, State#state.slots_maps),
         if
             Cluster#slots_map.node =/= undefined ->
@@ -117,9 +118,8 @@ reload_slots_map(State) ->
 
     %% Connect to new nodes
     ConnectedSlotsMaps = connect_all_slots(NewSlotsMaps, Options),
-    Slots = create_slots_cache(ConnectedSlotsMaps),
+    create_slots_cache(ConnectedSlotsMaps),
     NewState = State#state{
-        slots = list_to_tuple(Slots),
         slots_maps = list_to_tuple(ConnectedSlotsMaps),
         version = State#state.version + 1
     },
@@ -281,15 +281,14 @@ safe_eredis_start_link(Address, Port, Options) ->
     process_flag(trap_exit, false),
     Payload.
 
--spec create_slots_cache([#slots_map{}]) -> [integer()].
+-spec create_slots_cache([#slots_map{}]) -> true.
 create_slots_cache(SlotsMaps) ->
   SlotsCache = [[{Index, SlotsMap#slots_map.index}
         || Index <- lists:seq(SlotsMap#slots_map.start_slot,
             SlotsMap#slots_map.end_slot)]
         || SlotsMap <- SlotsMaps],
   SlotsCacheF = lists:flatten(SlotsCache),
-  SortedSlotsCache = lists:sort(SlotsCacheF),
-  [ Index || {_, Index} <- SortedSlotsCache].
+  ets:insert(?SLOTS, SlotsCacheF).
 
 -spec connect_all_slots([#slots_map{}], options()) -> [#slots_map{}].
 connect_all_slots(SlotsMapList, Options) ->
@@ -321,10 +320,9 @@ disconnect_(PoolNodes) ->
     NewSlotsMaps = close_connection_with_nodes(SlotsMaps, PoolNodes),
 
     ConnectedSlotsMaps = connect_all_slots(NewSlotsMaps, Options),
-    Slots = create_slots_cache(ConnectedSlotsMaps),
+    create_slots_cache(ConnectedSlotsMaps),
 
     NewState = State#state{
-                 slots = list_to_tuple(Slots),
                  slots_maps = list_to_tuple(ConnectedSlotsMaps),
                  version = State#state.version + 1
                 },
@@ -335,6 +333,7 @@ disconnect_(PoolNodes) ->
 
 init(_Args) ->
     ets:new(?MODULE, [protected, set, named_table, {read_concurrency, true}]),
+    ets:new(?SLOTS, [protected, set, named_table, {read_concurrency, true}]),
     InitNodes = application:get_env(eredis_cluster, init_nodes, []),
     Options = application:get_env(eredis_cluster, node_options, []),
     {ok, connect_(InitNodes, Options)}.
