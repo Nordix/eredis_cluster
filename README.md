@@ -59,8 +59,11 @@ your app.config):
                 {"127.0.0.1", 30002}
             ]},
             {pool_size, 5},
-            {pool_max_overflow, 10}
-            {password, "redis_pw"}
+            {pool_max_overflow, 10},
+
+            {password, "redis_pw"},
+            {socket_options, [{send_timeout, 6000}, ...]},
+            {tls, [{cacertfile, "ca.crt"}, ...]}
         ]
     }
 
@@ -69,28 +72,36 @@ retrieve them through the command `CLUSTER SLOTS` at runtime.
 
 ### Configuration description
 
+* `init_nodes`: List of Redis instances to fetch cluster information from. Default: `[]`
 * `pool_size`: Number of connected clients to each Redis instance. Default: `10`
 * `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
 * `password`: Password to use for a Redis cluster configured with `requirepass`. Default: `""` (i.e. AUTH not sent)
-* `init_nodes`: List of Redis instances to fetch cluster information from. Default: `[]`
+* `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`
+* `tls`: Enable TLS/SSL and use specified [TLSOptions](https://erlang.org/doc/man/ssl.html#type-client_option). Default: TLS not enabled.
 
 ### Configuring via API
 
-An alternative is to set the configurations programmatically via set_env() and `eredis_cluster:connect/1`.
+An alternative is to set configurations programmatically via set_env() and `eredis_cluster:connect/1`.
 
 ```erlang
 application:set_env(eredis_cluster, pool_size, 5),
 application:set_env(eredis_cluster, pool_max_overflow, 10),
 application:set_env(eredis_cluster, password, "redis_pw"),
+application:set_env(eredis_cluster, socket_options, [{send_timeout, 6000}]),
+application:set_env(eredis_cluster, tls, [{cacertfile, "ca.crt"},
+                                          {certfile, "client.crt"},
+                                          {keyfile, "client.key"}]),
 
-%% Set and connect to initial nodes
+%% Set initial nodes and perform a controlled connect
 eredis_cluster:connect([{"127.0.0.1", 30001},
                         {"127.0.0.1", 30002}]).
 ```
 
-### Configuring via API with extra options
+#### Alternative: set overriding options when calling connect
 
-To enable TLS or to performance tune sockets use `eredis_cluster:connect/2` instead.
+It is also possible to give options while doing a connect using `eredis_cluster:connect/2` instead.
+The given options will precede options set via application configuration,
+i.e will be prepended to the property list.
 
 ```erlang
 Options = [{tls, [{cacertfile, "ca.crt"},
@@ -99,15 +110,6 @@ Options = [{tls, [{cacertfile, "ca.crt"},
 eredis_cluster:connect([{"127.0.0.1", 30001},
                         {"127.0.0.1", 30002}], Options).
 ```
-
-#### Options description
-
-The following options are available via the proplist in `eredis_cluster:connect/2`
-
-* `tls`: Enable TLS/SSL and use specified [TLSOptions](https://erlang.org/doc/man/ssl.html#type-client_option). Default: TLS not enabled.
-* `connect_timeout`: [Timeout](https://erlang.org/doc/man/gen_tcp.html#connect-4) when attempting to connect. Default: `5000` [ms]
-* `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`
-* `reconnect_sleep`: Time between reconnection attempts. Default: `100` [ms]
 
 ## Usage
 

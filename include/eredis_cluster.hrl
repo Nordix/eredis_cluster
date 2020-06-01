@@ -19,6 +19,7 @@
 -record(node, {
     address :: string(),
     port :: integer(),
+    options :: options(),
     pool :: atom()
 }).
 
