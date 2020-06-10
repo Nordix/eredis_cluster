@@ -5,10 +5,12 @@
 connect_test() ->
     application:set_env(eredis_cluster, init_nodes, []),
     ?assertMatch(ok, eredis_cluster:start()),
-    Dir = filename:join([code:lib_dir(eredis_cluster), "test", "tls"]),
+    Dir = filename:join([code:priv_dir(eredis_cluster), "configs", "tls"]),
     Options = [{tls, [{cacertfile, filename:join([Dir, "ca.crt"])},
                       {certfile,   filename:join([Dir, "client.crt"])},
-                      {keyfile,    filename:join([Dir, "client.key"])}]}],
+                      {keyfile,    filename:join([Dir, "client.key"])},
+                      {verify,                 verify_peer},
+                      {server_name_indication, "Server"}]}],
     Res = eredis_cluster:connect([{"127.0.0.1", 31001},
                                   {"127.0.0.1", 31002}], Options),
     ?assertMatch(ok, Res),
@@ -33,7 +35,7 @@ options_override_test() ->
                                               {keyfile,    "faulty.key"}]),
 
     %% Connect using a correct cert via connect/2
-    Dir = filename:join([code:lib_dir(eredis_cluster), "test", "tls"]),
+    Dir = filename:join([code:priv_dir(eredis_cluster), "configs", "tls"]),
     Options = [{tls, [{cacertfile, filename:join([Dir, "ca.crt"])},
                       {certfile,   filename:join([Dir, "client.crt"])},
                       {keyfile,    filename:join([Dir, "client.key"])}]}],
@@ -55,7 +57,7 @@ options_changed_test() ->
     ?assertEqual({ok, <<"value">>}, eredis_cluster:q(["GET", Key])),
 
     %% Change TLS options via setenv
-    Dir = filename:join([code:lib_dir(eredis_cluster), "test", "tls"]),
+    Dir = filename:join([code:priv_dir(eredis_cluster), "configs", "tls"]),
     application:set_env(eredis_cluster, tls, [{cacertfile, filename:join([Dir, "faulty.crt"])},
                                               {certfile,   filename:join([Dir, "faulty.crt"])},
                                               {keyfile,    filename:join([Dir, "faulty.key"])}]),
@@ -65,7 +67,7 @@ options_changed_test() ->
     eredis_cluster_monitor:refresh_mapping(Version),
 
     %% Change back
-    Dir = filename:join([code:lib_dir(eredis_cluster), "test", "tls"]),
+    Dir = filename:join([code:priv_dir(eredis_cluster), "configs", "tls"]),
     application:set_env(eredis_cluster, tls, [{cacertfile, filename:join([Dir, "ca.crt"])},
                                               {certfile,   filename:join([Dir, "client.crt"])},
                                               {keyfile,    filename:join([Dir, "client.key"])}]),
@@ -84,7 +86,7 @@ start() ->
     ?assertMatch(ok, eredis_cluster:start()).
 
 connect_tls() ->
-    Dir = filename:join([code:lib_dir(eredis_cluster), "test", "tls"]),
+    Dir = filename:join([code:priv_dir(eredis_cluster), "configs", "tls"]),
     application:set_env(eredis_cluster, tls, [{cacertfile, filename:join([Dir, "ca.crt"])},
                                               {certfile,   filename:join([Dir, "client.crt"])},
                                               {keyfile,    filename:join([Dir, "client.key"])}]),

@@ -1,10 +1,10 @@
-.PHONY: all compile clean test xref dialyzer elvis cover coverview edoc help
+.PHONY: all compile clean test ut ct xref dialyzer elvis cover coverview edoc help
 .PHONY: start start-tcp start-tls status status-tcp status-tls stop travis-run
 
 REBAR ?= rebar3
-REDIS_VER ?= 6.0.1
+REDIS_VER ?= 6.0.4
 
-DOCKER_CONF = --net=host -v $(shell pwd)/test/tls:/conf/tls:ro
+DOCKER_CONF = --net=host -v $(shell pwd)/priv/configs/tls:/conf/tls:ro
 
 # Redis cluster - common configs
 REDIS_CONF = --cluster-enabled yes --cluster-node-timeout 5000 --appendonly yes
@@ -24,8 +24,13 @@ clean:
 	@$(REBAR) clean
 	@rm -rf _build
 
-test:
-	@ERL_FLAGS="-config test.config" $(REBAR) eunit -v --cover
+test: ut ct
+
+ut:
+	@ERL_FLAGS="-config test.config" $(REBAR) eunit -v --cover_export_name ut
+
+ct:
+	@$(REBAR) ct -v --cover_export_name ct
 
 xref:
 	@$(REBAR) xref
