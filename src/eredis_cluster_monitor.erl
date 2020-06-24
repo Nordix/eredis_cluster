@@ -300,9 +300,9 @@ connect_node(Node) ->
 
 safe_eredis_start_link(Address, Port, Options) ->
     process_flag(trap_exit, true),
-    Payload = eredis:start_link(Address, Port, Options),
+    Result = eredis:start_link(Address, Port, Options),
     process_flag(trap_exit, false),
-    Payload.
+    Result.
 
 -spec create_slots_cache([#slots_map{}]) -> true.
 create_slots_cache(SlotsMaps) ->

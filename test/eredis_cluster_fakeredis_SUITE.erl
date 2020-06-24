@@ -10,6 +10,7 @@
 %% Test cases
 -export([ t_connect/1
         , t_connect_tls/1
+        , t_redis_crash/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -36,7 +37,7 @@ suite() -> [{timetrap, {minutes, 5}}].
 %% Test
 
 t_connect(Config) when is_list(Config) ->
-    fakeredis_cluster:start_link([20001, 20002, 20003, 20004, 20005, 20006]),
+    fakeredis_cluster:start_link([20001, 20002, 20003]),
 
     ct:print("Perform inital connect..."),
     ?assertMatch(ok, eredis_cluster:connect([{"127.0.0.1", 20001}])),
@@ -54,7 +55,7 @@ t_connect_tls(Config) when is_list(Config) ->
                             {certfile,   filename:join([Dir, "redis.crt"])},
                             {keyfile,    filename:join([Dir, "redis.key"])},
                             {verify,     verify_peer}]}],
-    fakeredis_cluster:start_link([20001, 20002, 20003, 20004, 20005, 20006], ServerOptions),
+    fakeredis_cluster:start_link([20001, 20002, 20003], ServerOptions),
 
     ct:print("Perform inital connect..."),
     Options = [{tls, [{cacertfile, filename:join([Dir, "ca.crt"])},
@@ -70,3 +71,33 @@ t_connect_tls(Config) when is_list(Config) ->
     ?assertEqual({ok, undefined}, eredis_cluster:q(["GET","nonexists"])),
 
     ?assertMatch(ok, eredis_cluster:stop()).
+
+t_redis_crash(Config) when is_list(Config) ->
+    ok.
+%%     fakeredis_cluster:start_link([20001, 20002, 20003]),
+
+%%     ct:print("Perform inital connect..."),
+%%     ?assertMatch(ok, eredis_cluster:connect([{"127.0.0.1", 20001}])),
+
+%%     ct:print("Test access.."),
+%%     ?assertEqual({ok, <<"OK">>}, eredis_cluster:q(["SET", "key", "value"])),
+%%     ?assertEqual({ok, <<"value">>}, eredis_cluster:q(["GET", "key"])),
+%%     ?assertEqual({ok, undefined}, eredis_cluster:q(["GET","nonexists"])),
+
+%%     %% Kill FakeRedis instance
+%%     fakeredis_cluster:kill_instance(20003),
+
+%%     ct:print("Test access.."),
+%%     ?assertEqual({ok, <<"OK">>}, eredis_cluster:q(["SET", "key", "value"])),
+%%     ?assertEqual({ok, <<"value">>}, eredis_cluster:q(["GET", "key"])),
+%%     ?assertEqual({ok, undefined}, eredis_cluster:q(["GET","nonexists"])),
+
+%%     %% Restart FakeRedis instance
+%%     fakeredis_cluster:start_instance(20003),
+
+%%     ct:print("Test access.."),
+%%     ?assertEqual({ok, <<"OK">>}, eredis_cluster:q(["SET", "key", "value"])),
+%%     ?assertEqual({ok, <<"value">>}, eredis_cluster:q(["GET", "key"])),
+%%     ?assertEqual({ok, undefined}, eredis_cluster:q(["GET","nonexists"])),
+
+%%     ?assertMatch(ok, eredis_cluster:stop()).

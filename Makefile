@@ -47,7 +47,6 @@ cover:
 coverview: cover
 	xdg-open _build/test/cover/index.html
 
-
 edoc:
 	@$(REBAR) skip_deps=true doc
 
@@ -108,6 +107,6 @@ travis-run:
 	sleep 5
 	make status
 
-	make compile && make test
+	make clean compile test
 
 	make stop # Stop all cluster nodes

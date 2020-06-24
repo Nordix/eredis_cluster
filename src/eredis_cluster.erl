@@ -566,7 +566,7 @@ get_pool_by_key(Key) ->
 get_key_slot(Key) when is_bitstring(Key) ->
     get_key_slot(bitstring_to_list(Key));
 get_key_slot(Key) ->
-    KeyToBeHased = case string:chr(Key, ${) of
+    KeyToBeHashed = case string:chr(Key, ${) of
         0 ->
             Key;
         Start ->
@@ -582,7 +582,7 @@ get_key_slot(Key) ->
                     end
             end
     end,
-    eredis_cluster_hash:hash(KeyToBeHased).
+    eredis_cluster_hash:hash(KeyToBeHashed).
 
 %% =============================================================================
 %% @doc Return the first key in the command arguments.
