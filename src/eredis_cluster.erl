@@ -372,6 +372,7 @@ query_noreply(Command, PoolKey) ->
     Transaction = fun(Worker) -> qw_noreply(Worker, Command) end,
     {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
     eredis_cluster_pool:transaction(Pool, Transaction),
+    %% TODO: Retry if pool is full?
     ok.
 
 query(_, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
@@ -405,6 +406,10 @@ handle_transaction_result(Result, Version) ->
         %% the next request. We don't need to refresh the slot mapping in this
         %% case
         {error, tcp_closed} ->
+            retry;
+
+        %% Pool is full
+        {error, full} ->
             retry;
 
         %% Other TCP issues

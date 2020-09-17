@@ -36,6 +36,8 @@ init(Args) ->
 
     {ok, #state{conn=Conn}}.
 
+query(full, _Commands) ->
+    {error, full};
 query(Worker, Commands) ->
     gen_server:call(Worker, {'query', Commands}).
 
