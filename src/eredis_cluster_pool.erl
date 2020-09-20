@@ -42,8 +42,9 @@ transaction(PoolName, Transaction) ->
     try
         poolboy:transaction(PoolName, Transaction)
     catch
-        exit:_ ->
-            {error, no_connection}
+        exit:{timeout, _GenServerCall} ->
+            %% Poolboy checkout timeout, but the pool is consistent.
+            {error, pool_busy}
     end.
 
 -spec stop(PoolName::atom()) -> ok.
