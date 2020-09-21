@@ -2,10 +2,15 @@
     {description, "Eredis Cluster"},
     {vsn, "0.5.12"},
     {modules, []},
-    {registered, []},
+    {registered, [
+        eredis_cluster_monitor,
+        eredis_cluster_pool,
+        eredis_cluster_sup
+    ]},
     {applications, [
         kernel,
-        stdlib
+        stdlib,
+        ssl
     ]},
     {mod, {eredis_cluster, []}},
     {env, []}
