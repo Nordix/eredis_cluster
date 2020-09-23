@@ -1,10 +1,12 @@
-{"1.1.0",
+{"1.2.0",
 [{<<"eredis">>,
   {git,"git://github.com/Nordix/eredis.git",
-       {ref,"17d192e8ca8489ab2fe7cf29bc8a22dd4b8ebe4b"}},
+       {ref,"003d14fd7fc4e995acf0068e4bd1ec67bc112ec8"}},
   0},
  {<<"poolboy">>,{pkg,<<"poolboy">>,<<"1.5.2">>},0}]}.
 [
 {pkg_hash,[
- {<<"poolboy">>, <<"392B007A1693A64540CEAD79830443ABF5762F5D30CF50BC95CB2C1AAAFA006B">>}]}
+ {<<"poolboy">>, <<"392B007A1693A64540CEAD79830443ABF5762F5D30CF50BC95CB2C1AAAFA006B">>}]},
+{pkg_hash_ext,[
+ {<<"poolboy">>, <<"DAD79704CE5440F3D5A3681C8590B9DC25D1A561E8F5A9C995281012860901E3">>}]}
 ].

@@ -185,12 +185,14 @@ qa2(Command, Counter, Res) ->
 %% @end
 %% =============================================================================
 -spec qw(Worker::pid(), redis_command()) -> redis_result().
+qw(Worker, [[X|_]|_] = Commands) when is_list(X); is_binary(X) ->
+    eredis:qp(Worker, Commands);
 qw(Worker, Command) ->
-    eredis_cluster_pool_worker:query(Worker, Command).
+    eredis:q(Worker, Command).
 
 -spec qw_noreply(Worker::pid(), redis_command()) -> redis_result().
 qw_noreply(Worker, Command) ->
-    eredis_cluster_pool_worker:query_noreply(Worker, Command).
+    eredis:q_noreply(Worker, Command).
 
 %% =============================================================================
 %% @doc Wrapper function to execute a pipeline command as a transaction Command

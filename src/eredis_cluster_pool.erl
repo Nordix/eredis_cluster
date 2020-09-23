@@ -24,7 +24,7 @@ create(Host, Port, Options) ->
             MaxOverflow = application:get_env(eredis_cluster, pool_max_overflow, 0),
 
             PoolArgs = [{name, {local, PoolName}},
-                        {worker_module, eredis_cluster_pool_worker},
+                        {worker_module, eredis},
                         {size, Size},
                         {max_overflow, MaxOverflow}],
 

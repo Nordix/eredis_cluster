@@ -149,7 +149,7 @@ get_cluster_slots() ->
 
 get_cluster_slots(InitNodes, Options) ->
     Query = ["CLUSTER", "SLOTS"],
-    FailFn = fun(Node) -> get_cluster_slots_from_single_node(Node) end,
+    FailFn = fun get_cluster_slots_from_single_node/1,
     get_cluster_info(InitNodes, Options, Query, FailFn, []).
 
 %% =============================================================================
