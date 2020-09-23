@@ -186,17 +186,18 @@ get_cluster_info([], _Options, _Query, _FailFn, ErrorList) ->
 get_cluster_info([Node|T], Options, Query, FailFn, ErrorList) ->
     case safe_eredis_start_link(Node#node.address, Node#node.port, Options) of
         {ok, Connection} ->
-            try
-                case eredis:q(Connection, Query) of
-                    {error, <<"ERR unknown command 'CLUSTER'">>} ->
-                        FailFn(Node);
-                    {error, <<"ERR This instance has cluster support disabled">>} ->
-                        FailFn(Node);
-                    {ok, ClusterInfo} ->
-                        ClusterInfo;
-                    Reason ->
-                        get_cluster_info(T, Options, Query, FailFn, [{Node, Reason} | ErrorList])
-                end
+            try eredis:q(Connection, Query) of
+                {error, <<"ERR unknown command 'CLUSTER'">>} ->
+                    FailFn(Node);
+                {error, <<"ERR This instance has cluster support disabled">>} ->
+                    FailFn(Node);
+                {ok, ClusterInfo} ->
+                    ClusterInfo;
+                Reason ->
+                    get_cluster_info(T, Options, Query, FailFn, [{Node, Reason} | ErrorList])
+            catch
+                exit:{timeout, {gen_server, call, _}} ->
+                    get_cluster_info(T, Options, Query, FailFn, [{Node, timeout} | ErrorList])
             after
                 eredis:stop(Connection)
             end;
