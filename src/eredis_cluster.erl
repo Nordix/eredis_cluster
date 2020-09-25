@@ -77,11 +77,11 @@ disconnect(PoolNodes) ->
 %% the node will be automatically found according to the key used in the command
 %% @end
 %% =============================================================================
--spec q(redis_command()) -> redis_result().
+-spec q(Command::redis_command()) -> redis_result().
 q(Command) ->
     query(Command).
 
--spec qk(redis_command(), bitstring()) -> redis_result().
+-spec qk(Command::redis_command(), PoolKey::bitstring()) -> redis_result().
 qk(Command, PoolKey) ->
     query(Command, PoolKey).
 
@@ -90,6 +90,7 @@ qk(Command, PoolKey) ->
 %% ignoring any response from Redis. (Fire and forget)
 %% @end
 %% =============================================================================
+-spec q_noreply(Command::redis_command()) -> ok.
 q_noreply(Command) ->
     PoolKey = get_key_from_command(Command),
     query_noreply(Command, PoolKey).
@@ -98,7 +99,7 @@ q_noreply(Command) ->
 %% @doc Wrapper function for command using pipelined commands
 %% @end
 %% =============================================================================
--spec qp(redis_pipeline_command()) -> redis_pipeline_result().
+-spec qp(Commands::redis_pipeline_command()) -> redis_pipeline_result().
 qp(Commands) -> q(Commands).
 
 %% =============================================================================
@@ -106,7 +107,7 @@ qp(Commands) -> q(Commands).
 %% When a query to a master fail refresh the mapping and try again.
 %% @end
 %% =============================================================================
--spec qa(redis_command()) -> [redis_transaction_result()].
+-spec qa(Command::redis_command()) -> [redis_transaction_result()] | {error, no_connection}.
 qa(Command) -> qa(Command, 0, []).
 
 qa(_, ?REDIS_CLUSTER_REQUEST_TTL, Res) ->
@@ -141,7 +142,7 @@ qa(Command, Counter, Res) ->
 %% When a query to the master fail refresh the mapping and try again.
 %% @end
 %% =============================================================================
--spec qa2(redis_command()) -> [{atom(), redis_result()}] | {error, no_connection}.
+-spec qa2(Command::redis_command()) -> [{atom(), redis_result()}] | {error, no_connection}.
 qa2(Command) -> qa2(Command, 0, []).
 
 qa2(_, ?REDIS_CLUSTER_REQUEST_TTL, Res) ->
@@ -187,10 +188,11 @@ qa2(Command, Counter, Res) ->
 -spec qw(Worker::pid(), redis_command()) -> redis_result().
 qw(Worker, [[X|_]|_] = Commands) when is_list(X); is_binary(X) ->
     eredis:qp(Worker, Commands);
+
 qw(Worker, Command) ->
     eredis:q(Worker, Command).
 
--spec qw_noreply(Worker::pid(), redis_command()) -> redis_result().
+-spec qw_noreply(Worker::pid(), Command::redis_command()) -> ok.
 qw_noreply(Worker, Command) ->
     eredis:q_noreply(Worker, Command).
 
@@ -199,7 +201,7 @@ qw_noreply(Worker, Command) ->
 %% (it will add MULTI and EXEC command)
 %% @end
 %% =============================================================================
--spec transaction(redis_pipeline_command()) -> redis_transaction_result().
+-spec transaction(Commands::redis_pipeline_command()) -> redis_transaction_result().
 transaction(Commands) ->
     Result = q([["multi"]| Commands] ++ [["exec"]]),
     case is_list(Result) of
@@ -213,7 +215,7 @@ transaction(Commands) ->
 %% @doc Multi node query
 %% @end
 %% =============================================================================
--spec qmn(redis_pipeline_command()) -> redis_pipeline_result().
+-spec qmn(Commands::redis_pipeline_command()) -> redis_pipeline_result().
 qmn(Commands) -> qmn(Commands, 0).
 
 qmn(_, ?REDIS_CLUSTER_REQUEST_TTL) ->
@@ -251,7 +253,8 @@ qmn2([], [], Acc, _) ->
 %% containing.
 %% @end
 %% =============================================================================
--spec transaction(fun((Worker::pid()) -> redis_result()), anystring()) -> any().
+-spec transaction(Transaction::fun((Worker::pid()) -> redis_result()),
+                  PoolKey::bitstring()) -> any().
 transaction(Transaction, PoolKey) ->
     Slot = get_key_slot(PoolKey),
     transaction(Transaction, Slot, undefined, 0).
@@ -287,7 +290,7 @@ flushdb() ->
 %% @doc Load LUA script to all master nodes in the Redis cluster.
 %% @end
 %% =============================================================================
--spec load_script(string()) -> redis_result().
+-spec load_script(Script::string()) -> redis_result().
 load_script(Script) ->
     Command = ["SCRIPT", "LOAD", Script],
     case qa(Command) of
@@ -492,7 +495,7 @@ update_hash_field(Key, Field, UpdateFunction) ->
 %% http://redis.io/topics/transactions
 %% @end
 %% =============================================================================
--spec optimistic_locking_transaction(Key::anystring(), redis_command(),
+-spec optimistic_locking_transaction(WatchedKey::anystring(), GetCommand::redis_command(),
     UpdateFunction::fun((redis_result()) -> redis_pipeline_command())) ->
         {redis_transaction_result(), any()}.
 optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
@@ -513,7 +516,7 @@ optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
         {lists:last(RedisResult), Result}
     end,
     case transaction(Transaction, Slot, {ok, undefined}, ?OL_TRANSACTION_TTL) of
-        {{ok, undefined}, _} ->
+        {{ok, undefined}, _} ->  % The key was touched by other client
             {error, resource_busy};
         {{ok, TransactionResult}, UpdateResult} ->
             {ok, {TransactionResult, UpdateResult}};
@@ -527,8 +530,8 @@ optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
 %% try again.
 %% @end
 %% =============================================================================
--spec eval(bitstring(), bitstring(), [bitstring()], [bitstring()]) ->
-    redis_result().
+-spec eval(Script::bitstring(), ScriptHash::bitstring(), Keys::[bitstring()],
+           Args::[bitstring()]) -> redis_result().
 eval(Script, ScriptHash, Keys, Args) ->
     KeyNb = length(Keys),
     EvalShaCommand = ["EVALSHA", ScriptHash, KeyNb] ++ Keys ++ Args,
@@ -550,6 +553,7 @@ eval(Script, ScriptHash, Keys, Args) ->
 %% @doc Returns the pool for a command.
 %% @end
 %% =============================================================================
+-spec get_pool_by_command(Command::redis_command()) -> atom() | undefined.
 get_pool_by_command(Command) ->
     Key = get_key_from_command(Command),
     get_pool_by_key(Key).
@@ -558,6 +562,7 @@ get_pool_by_command(Command) ->
 %% @doc Returns the pool for a key.
 %% @end
 %% =============================================================================
+-spec get_pool_by_key(Key::anystring()) -> atom() | undefined.
 get_pool_by_key(Key) ->
     Slot = get_key_slot(Key),
     {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
