@@ -100,7 +100,7 @@ reload_slots_map(State) ->
     OldSlotsMaps = tuple_to_list(State#state.slots_maps),
 
     Options = get_current_options(State),
-    ClusterSlots = get_cluster_slots(State#state.init_nodes, Options),
+    ClusterSlots = get_cluster_slots(State, Options),
     NewSlotsMaps = parse_cluster_slots(ClusterSlots, Options),
     %% Find old slots_maps with nodes still in use.
     CommonInOldMap = lists:flatmap(
@@ -145,12 +145,12 @@ remove_list_elements(Xs, Ys) ->
 get_cluster_slots() ->
     State = get_state(),
     Options = get_current_options(State),
-    get_cluster_slots(State#state.init_nodes, Options).
+    get_cluster_slots(State, Options).
 
-get_cluster_slots(InitNodes, Options) ->
+get_cluster_slots(State, Options) ->
     Query = ["CLUSTER", "SLOTS"],
     FailFn = fun get_cluster_slots_from_single_node/1,
-    get_cluster_info(InitNodes, Options, Query, FailFn, []).
+    get_cluster_info(State, Options, Query, FailFn).
 
 %% =============================================================================
 %% @doc Get cluster nodes information.
@@ -164,13 +164,13 @@ get_cluster_slots(InitNodes, Options) ->
 get_cluster_nodes() ->
     State = get_state(),
     Options = get_current_options(State),
-    get_cluster_nodes(State#state.init_nodes, Options).
+    get_cluster_nodes(State, Options).
 
 -spec get_cluster_nodes([#node{}], options()) -> [[bitstring()]].
-get_cluster_nodes(InitNodes, Options) ->
+get_cluster_nodes(State, Options) ->
     Query = ["CLUSTER", "NODES"],
     FailFn = fun(_Node) -> "" end, %% No default data to use when query fails
-    ClusterNodes = get_cluster_info(InitNodes, Options, Query, FailFn, []),
+    ClusterNodes = get_cluster_info(State, Options, Query, FailFn),
     %% Parse result into list of element lists
     NodesInfoList = binary:split(ClusterNodes, <<"\n">>, [global, trim]),
     lists:foldl(fun(Node, Acc) ->
@@ -178,31 +178,118 @@ get_cluster_nodes(InitNodes, Options) ->
                 end, [], NodesInfoList).
 
 %% =============================================================================
-%% @doc Generic function to do cluster information requests to a init node
+%% @doc Fetch cluster information from an already connected node or from an init
+%%      node if no nodes are connected. Throws an exception if everything fails.
 %% @end
 %% =============================================================================
-get_cluster_info([], _Options, _Query, _FailFn, ErrorList) ->
+
+-spec get_cluster_info(State :: #state{}, Options :: options(), Query :: list(),
+                       FailFn :: fun((#node{}) -> iodata())) ->
+          iodata().
+get_cluster_info(State, Options, Query, FailFn) ->
+    %% First try to use existing connections in pools found in the slot map
+    case get_cluster_info_from_existing_pools(State#state.slots_maps, Options,
+                                              Query, FailFn) of
+        {ok, Result} ->
+            Result;
+        _Error ->
+            %% No usable pool connected. Connect to init nodes.
+            get_cluster_info_from_init_nodes(State#state.init_nodes, Options,
+                                             Query, FailFn, [])
+    end.
+
+-spec get_cluster_info_from_existing_pools(SlotMaps :: tuple(),
+                                           Options  :: options(),
+                                           Query    :: list(),
+                                           FailFn   :: fun((#node{}) -> list())) ->
+          {ok, list()} | {error, no_connection}.
+get_cluster_info_from_existing_pools(SlotMaps, Options, Query, FailFn) ->
+    get_cluster_info_from_existing_pools(SlotMaps, Options, Query, FailFn, {1, #{}}).
+
+get_cluster_info_from_existing_pools(SlotMaps, Options, Query, FailFn, SlotMapIterator) ->
+    case next_node_in_slots_maps(SlotMaps, Options, SlotMapIterator) of
+        {ok, Node, NewSlotMapIterator} ->
+            Transaction = fun(Connection) ->
+                                  get_cluster_info_from_connection(Connection, Query, FailFn, Node)
+                          end,
+            try
+                {ok, _Result} = poolboy:transaction(Node#node.pool, Transaction)
+            catch
+                _:_ ->
+                    get_cluster_info_from_existing_pools(SlotMaps, Options, Query, FailFn, NewSlotMapIterator)
+            end;
+        none ->
+            {error, no_connection}
+    end.
+
+%% Get next node from a tuple of slots maps, using an iterator tuple to remember what's next
+-spec next_node_in_slots_maps(SlotsMaps :: tuple(),
+                              Options   :: options(),
+                              Iterator  :: {Index             :: pos_integer(),
+                                            AttemptedPoolsMap :: #{atom() => true}}) ->
+          {ok, Node :: #node{}, NextIterator :: {NextIndex            :: pos_integer(),
+                                                 NewAttemptedPoolsMap :: #{atom() => true}}} |
+          none.
+next_node_in_slots_maps(SlotsMaps, Options, {Index, AttemptedPoolsMap})
+  when Index =< tuple_size(SlotsMaps) ->
+    SlotsMap = element(Index, SlotsMaps),
+    case SlotsMap of
+        #slots_map{node = Node = #node{options = Options,
+                                       pool    = Pool}} ->
+            case maps:is_key(Pool, AttemptedPoolsMap) of
+                true ->
+                    %% This pool has been returned before. Try next.
+                    next_node_in_slots_maps(SlotsMaps, Options, {Index + 1, AttemptedPoolsMap});
+                false ->
+                    %% It's usable.
+                    NextIterator = {Index + 1, AttemptedPoolsMap#{Pool => true}},
+                    {ok, Node, NextIterator}
+            end;
+        _NotUsable ->
+            %% Options mismatch or node not a record. Try next.
+            next_node_in_slots_maps(SlotsMaps, Options, {Index + 1, AttemptedPoolsMap})
+    end;
+next_node_in_slots_maps(_SlotsMaps, _Options, _Iterator) ->
+    none.
+
+%% Connect to an init node, fetch cluster info and disconnect again
+get_cluster_info_from_init_nodes([], _Options, _Query, _FailFn, ErrorList) ->
     throw({reply, {error, {cannot_connect_to_cluster, ErrorList}}, #state{}});
-get_cluster_info([Node|T], Options, Query, FailFn, ErrorList) ->
+get_cluster_info_from_init_nodes([Node|Nodes], Options, Query, FailFn, ErrorList) ->
     case safe_eredis_start_link(Node#node.address, Node#node.port, Options) of
         {ok, Connection} ->
-            try eredis:q(Connection, Query) of
-                {error, <<"ERR unknown command 'CLUSTER'">>} ->
-                    FailFn(Node);
-                {error, <<"ERR This instance has cluster support disabled">>} ->
-                    FailFn(Node);
-                {ok, ClusterInfo} ->
-                    ClusterInfo;
+            try get_cluster_info_from_connection(Connection, Query, FailFn, Node) of
+                {ok, Result} ->
+                    Result;
                 Reason ->
-                    get_cluster_info(T, Options, Query, FailFn, [{Node, Reason} | ErrorList])
-            catch
-                exit:{timeout, {gen_server, call, _}} ->
-                    get_cluster_info(T, Options, Query, FailFn, [{Node, timeout} | ErrorList])
+                    get_cluster_info_from_init_nodes(Nodes, Options, Query, FailFn,
+                                                     [{Node, Reason} | ErrorList])
             after
                 eredis:stop(Connection)
             end;
         Reason ->
-            get_cluster_info(T, Options, Query, FailFn, [{Node, Reason} | ErrorList])
+            get_cluster_info_from_init_nodes(Nodes, Options, Query, FailFn,
+                                             [{Node, Reason} | ErrorList])
+    end.
+
+-spec get_cluster_info_from_connection(Connection :: pid(),
+                                       Query      :: list(),
+                                       FailFn     :: fun((#node{}) -> list()),
+                                       Node       :: #node{}) ->
+          ClusterInfo :: list().
+get_cluster_info_from_connection(Connection, Query, FailFn, Node) ->
+    try eredis:q(Connection, Query) of
+        {ok, ClusterInfo} ->
+            {ok, ClusterInfo};
+        {error, <<"ERR unknown command 'CLUSTER'">>} ->
+            {ok, FailFn(Node)};
+        {error, <<"ERR This instance has cluster support disabled">>} ->
+            {ok, FailFn(Node)};
+        OtherError ->
+            OtherError
+    catch
+        exit:{timeout, {gen_server, call, _}} ->
+            {error, timeout}
     end.
 
 -spec get_cluster_slots_from_single_node(#node{}) ->
