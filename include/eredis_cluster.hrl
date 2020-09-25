@@ -19,8 +19,8 @@
 -record(node, {
     address :: string(),
     port :: integer(),
-    options :: options(),
-    pool :: atom()
+    options :: options() | undefined,           % not used for init_nodes
+    pool :: atom()                              % not used for init_nodes
 }).
 
 -record(slots_map, {

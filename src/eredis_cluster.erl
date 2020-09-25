@@ -119,7 +119,7 @@ qa(Command, Counter, Res) ->
 
     State = eredis_cluster_monitor:get_state(),
     Version = eredis_cluster_monitor:get_state_version(State),
-    Pools = eredis_cluster_monitor:get_all_pools(),
+    Pools = eredis_cluster_monitor:get_all_pools(State),
     case Pools of
         [] ->
             eredis_cluster_monitor:refresh_mapping(Version),
@@ -154,7 +154,7 @@ qa2(Command, Counter, Res) ->
 
     State = eredis_cluster_monitor:get_state(),
     Version = eredis_cluster_monitor:get_state_version(State),
-    Pools = eredis_cluster_monitor:get_all_pools(),
+    Pools = eredis_cluster_monitor:get_all_pools(State),
     case Pools of
         [] ->
             eredis_cluster_monitor:refresh_mapping(Version),
@@ -552,9 +552,7 @@ eval(Script, ScriptHash, Keys, Args) ->
 %% =============================================================================
 get_pool_by_command(Command) ->
     Key = get_key_from_command(Command),
-    Slot = get_key_slot(Key),
-    {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
-    Pool.
+    get_pool_by_key(Key).
 
 %% =============================================================================
 %% @doc Returns the pool for a key.

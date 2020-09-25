@@ -7,6 +7,9 @@
 -export([refresh_mapping/1]).
 -export([get_state/0, get_state_version/1]).
 -export([get_pool_by_slot/1, get_pool_by_slot/2]).
+-export([get_all_pools/1]).
+
+%% API used for tests only.
 -export([get_all_pools/0]).
 -export([get_cluster_slots/0, get_cluster_nodes/0]).
 
@@ -58,7 +61,10 @@ get_state_version(State) ->
 
 -spec get_all_pools() -> [atom()].
 get_all_pools() ->
-    State = get_state(),
+    get_all_pools(get_state()).
+
+-spec get_all_pools(#state{}) -> [atom()].
+get_all_pools(State) ->
     SlotsMapList = tuple_to_list(State#state.slots_maps),
     lists:usort([SlotsMap#slots_map.node#node.pool || SlotsMap <- SlotsMapList,
                     SlotsMap#slots_map.node =/= undefined]).
@@ -406,11 +412,10 @@ connect_all_slots(SlotsMapList) ->
     [SlotsMap#slots_map{node=connect_node(SlotsMap#slots_map.node)} ||
         SlotsMap <- SlotsMapList].
 
--spec connect_([{Address::string(), Port::integer()}], options()) -> #state{}.
-connect_([], _Options) ->
-    #state{};
-connect_(InitNodes, Options) ->
-    State = get_state(),
+-spec connect_([{Address::string(), Port::integer()}], options(), #state{}) -> #state{}.
+connect_([], _Options, State) ->
+    State;
+connect_(InitNodes, Options, State) ->
     NewState = State#state{
         init_nodes = [#node{address = A, port = P} || {A, P} <- InitNodes],
         node_options = Options
@@ -418,11 +423,10 @@ connect_(InitNodes, Options) ->
 
     reload_slots_map(NewState).
 
--spec disconnect_([PoolNodes :: term()]) -> #state{}.
-disconnect_([]) ->
-    #state{};
-disconnect_(PoolNodes) ->
-    State = get_state(),
+-spec disconnect_([PoolNodes :: term()], #state{}) -> #state{}.
+disconnect_([], State) ->
+    State;
+disconnect_(PoolNodes, State) ->
     SlotsMaps = tuple_to_list(State#state.slots_maps),
 
     NewSlotsMaps = close_connection_with_nodes(SlotsMaps, PoolNodes),
@@ -443,16 +447,16 @@ init(_Args) ->
     ets:new(?MODULE, [protected, set, named_table, {read_concurrency, true}]),
     ets:new(?SLOTS, [protected, set, named_table, {read_concurrency, true}]),
     InitNodes = application:get_env(eredis_cluster, init_nodes, []),
-    {ok, connect_(InitNodes, [])}. %% get_env options read later in callstack
+    {ok, connect_(InitNodes, [], #state{})}. %% get_env options read later in callstack
 
 handle_call({reload_slots_map, Version}, _From, #state{version=Version} = State) ->
     {reply, ok, reload_slots_map(State)};
 handle_call({reload_slots_map, _}, _From, State) ->
     {reply, ok, State};
-handle_call({connect, InitServers, Options}, _From, _State) ->
-    {reply, ok, connect_(InitServers, Options)};
-handle_call({disconnect, PoolNodes}, _From, _State) ->
-    {reply, ok, disconnect_(PoolNodes)};
+handle_call({connect, InitServers, Options}, _From, State) ->
+    {reply, ok, connect_(InitServers, Options, State)};
+handle_call({disconnect, PoolNodes}, _From, State) ->
+    {reply, ok, disconnect_(PoolNodes, State)};
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 
