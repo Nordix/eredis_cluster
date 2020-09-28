@@ -13,7 +13,16 @@
 -type redis_transaction_result() :: {ok, [redis_success_result()]}
     | {ok, undefined} % EXEC reply undefined if the transaction was aborted
     | {error, redis_error_result()}.
--type redis_result() :: redis_simple_result() | redis_pipeline_result().
+
+-type optimistic_locking_error_result() :: {error, resource_busy} % lock failed
+    | {error, redis_error_result()}.
+-type optimistic_locking_result() :: optimistic_locking_error_result()
+    | {{ok, undefined}, any()} % lock failed once
+    | {{ok, redis_success_result()}, any()}
+    | {{ok, [redis_success_result()]}, any()}.
+
+-type redis_result() :: redis_simple_result() | redis_pipeline_result()
+    | optimistic_locking_result().
 
 -type options() :: [{term(), term()}].
 

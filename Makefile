@@ -15,7 +15,7 @@ REDIS_TLS_CONF += --tls-ca-cert-file /conf/tls/ca.crt
 REDIS_TLS_CONF += --tls-cert-file /conf/tls/redis.crt
 REDIS_TLS_CONF += --tls-key-file /conf/tls/redis.key
 
-all: compile xref elvis
+all: compile dialyzer xref elvis
 
 compile:
 	@$(REBAR) compile
@@ -107,6 +107,6 @@ travis-run:
 	sleep 5
 	make status
 
-	make clean compile test
+	make clean dialyzer compile test
 
 	make stop # Stop all cluster nodes

@@ -63,7 +63,7 @@ get_state_version(State) ->
 get_all_pools() ->
     get_all_pools(get_state()).
 
--spec get_all_pools(#state{}) -> [atom()].
+-spec get_all_pools(State :: #state{}) -> [atom()].
 get_all_pools(State) ->
     SlotsMapList = tuple_to_list(State#state.slots_maps),
     lists:usort([SlotsMap#slots_map.node#node.pool || SlotsMap <- SlotsMapList,
@@ -74,14 +74,14 @@ get_all_pools(State) ->
 %% to prevent from querying ets inside loops.
 %% @end
 %% =============================================================================
--spec get_pool_by_slot(Slot::integer()) ->
-    {PoolName::atom() | undefined, Version::integer()}.
+-spec get_pool_by_slot(Slot :: integer()) ->
+    {PoolName :: atom() | undefined, Version :: integer()}.
 get_pool_by_slot(Slot) ->
     State = get_state(),
     get_pool_by_slot(Slot, State).
 
--spec get_pool_by_slot(Slot::integer(), State::#state{}) ->
-    {PoolName::atom() | undefined, Version::integer()}.
+-spec get_pool_by_slot(Slot :: integer(), State :: #state{}) ->
+    {PoolName :: atom() | undefined, Version :: integer()}.
 get_pool_by_slot(Slot, State) ->
     try
         [{_, Index}] = ets:lookup(?SLOTS, Slot),
@@ -172,13 +172,13 @@ get_cluster_nodes() ->
     Options = get_current_options(State),
     get_cluster_nodes(State, Options).
 
--spec get_cluster_nodes([#node{}], options()) -> [[bitstring()]].
+-spec get_cluster_nodes(State :: #state{}, Options :: options()) -> [[bitstring()]].
 get_cluster_nodes(State, Options) ->
     Query = ["CLUSTER", "NODES"],
     FailFn = fun(_Node) -> "" end, %% No default data to use when query fails
     ClusterNodes = get_cluster_info(State, Options, Query, FailFn),
     %% Parse result into list of element lists
-    NodesInfoList = binary:split(ClusterNodes, <<"\n">>, [global, trim]),
+    NodesInfoList = binary:split(iolist_to_binary(ClusterNodes), <<"\n">>, [global, trim]),
     lists:foldl(fun(Node, Acc) ->
                         Acc ++ [binary:split(Node, <<" ">>, [global, trim])]
                 end, [], NodesInfoList).
@@ -282,7 +282,7 @@ get_cluster_info_from_init_nodes([Node|Nodes], Options, Query, FailFn, ErrorList
                                        Query      :: list(),
                                        FailFn     :: fun((#node{}) -> list()),
                                        Node       :: #node{}) ->
-          ClusterInfo :: list().
+          ClusterInfo :: redis_simple_result().
 get_cluster_info_from_connection(Connection, Query, FailFn, Node) ->
     try eredis:q(Connection, Query) of
         {ok, ClusterInfo} ->
@@ -412,7 +412,8 @@ connect_all_slots(SlotsMapList) ->
     [SlotsMap#slots_map{node=connect_node(SlotsMap#slots_map.node)} ||
         SlotsMap <- SlotsMapList].
 
--spec connect_([{Address::string(), Port::integer()}], options(), #state{}) -> #state{}.
+-spec connect_([{Address :: string(), Port :: integer()}],
+               Options :: options(), State :: #state{}) -> #state{}.
 connect_([], _Options, State) ->
     State;
 connect_(InitNodes, Options, State) ->
@@ -423,7 +424,7 @@ connect_(InitNodes, Options, State) ->
 
     reload_slots_map(NewState).
 
--spec disconnect_([PoolNodes :: term()], #state{}) -> #state{}.
+-spec disconnect_([PoolNodes :: term()], State :: #state{}) -> #state{}.
 disconnect_([], State) ->
     State;
 disconnect_(PoolNodes, State) ->

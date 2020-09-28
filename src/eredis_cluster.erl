@@ -476,7 +476,8 @@ update_key(Key, UpdateFunction) ->
 %% @end
 %% =============================================================================
 -spec update_hash_field(Key::anystring(), Field::anystring(),
-    UpdateFunction::fun((any()) -> any())) -> redis_transaction_result().
+    UpdateFunction::fun((any()) -> any())) ->
+          {ok, {[any()], any()}} | {error, redis_error_result()}.
 update_hash_field(Key, Field, UpdateFunction) ->
     UpdateFunction2 = fun(GetResult) ->
         {ok, Var} = GetResult,
@@ -495,9 +496,11 @@ update_hash_field(Key, Field, UpdateFunction) ->
 %% http://redis.io/topics/transactions
 %% @end
 %% =============================================================================
--spec optimistic_locking_transaction(WatchedKey::anystring(), GetCommand::redis_command(),
-    UpdateFunction::fun((redis_result()) -> redis_pipeline_command())) ->
-        {redis_transaction_result(), any()}.
+-spec optimistic_locking_transaction(WatchedKey :: anystring(),
+                                     GetCommand :: redis_command(),
+                                     UpdateFunction :: fun((redis_result()) -> redis_pipeline_command())) ->
+          {ok, {redis_success_result(), any()}} | {ok, {[redis_success_result()], any()}}
+          | optimistic_locking_error_result().
 optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
     Slot = get_key_slot(WatchedKey),
     Transaction = fun(Worker) ->
@@ -524,17 +527,18 @@ optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
             Error
     end.
 
+
 %% =============================================================================
 %% @doc Eval command helper, to optimize the query, it will try to execute the
 %% script using its hashed value. If no script is found, it will load it and
 %% try again.
 %% @end
 %% =============================================================================
--spec eval(Script::bitstring(), ScriptHash::bitstring(), Keys::[bitstring()],
-           Args::[bitstring()]) -> redis_result().
+-spec eval(Script :: bitstring(), ScriptHash :: bitstring(), Keys :: [bitstring()],
+           Args :: [bitstring()]) -> redis_result().
 eval(Script, ScriptHash, Keys, Args) ->
     KeyNb = length(Keys),
-    EvalShaCommand = ["EVALSHA", ScriptHash, KeyNb] ++ Keys ++ Args,
+    EvalShaCommand = ["EVALSHA", ScriptHash, integer_to_binary(KeyNb)] ++ Keys ++ Args,
     Key = if
         KeyNb == 0 -> "A"; %Random key
         true -> hd(Keys)
