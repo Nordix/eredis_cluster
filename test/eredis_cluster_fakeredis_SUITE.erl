@@ -12,6 +12,9 @@
         , t_connect_tls/1
         , t_pool_full/1
         , t_redis_crash/1
+        , t_ask_redirect/1
+        , t_pipeline_ask_redirect/1
+        , t_moved_redirect/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -149,3 +152,166 @@ t_redis_crash(Config) when is_list(Config) ->
 %%     ?assertEqual({ok, undefined}, eredis_cluster:q(["GET","nonexists"])),
 
 %%     ?assertMatch(ok, eredis_cluster:stop()).
+
+t_ask_redirect(Config) when is_list(Config) ->
+    Ports = [20001, 20002],
+    fakeredis_cluster:start_link(Ports),
+    ok = eredis_cluster:connect([{"127.0.0.1", 20001}]),
+    {ok, <<"OK">>} = eredis_cluster:q(["SET", "foo", "bar"]),
+
+    %% Now, set up an ASK redirect for foo to the other node.  First
+    %% check which node has it already and move it to the other node.
+    {moved, _Slot, Address, HomePort} =
+        fakeredis_cluster:get_redirect_by_key(<<"foo">>),
+    OtherPort = hd([P || P <- Ports, P =/= HomePort]),
+    ok = fakeredis_cluster:set_ask_redirect(<<"foo">>, Address, OtherPort),
+
+    %% Check that eredis_cluster can follow the redirect
+    ?assertEqual({ok, <<"bar">>},
+                 eredis_cluster:q(["GET", "foo"])),
+
+    %% Check that no additional CLUSTER SLOTS or other unexpected
+    %% connections or commands were performed.
+    EventLog = fakeredis_cluster:get_event_log(),
+    [
+     %% Get initial slot mapping
+     {InitNodeConn, connect, _},
+     {InitNodeConn, command, [<<"CLUSTER">>, <<"SLOTS">>]},
+     {InitNodeConn, reply, _SlotsMapping},
+     {InitNodeConn, disconnect, normal},
+     %% Start pools
+     {_, connect, _},
+     {_, connect, _},
+     %% Client sets foo = bar using original slot mapping
+     {Conn1, command, [<<"SET">>, <<"foo">>, <<"bar">>]},
+     {Conn1, reply, ok},
+     %% The ASK redirect is created here.
+     {Conn1, command, [<<"GET">>, <<"foo">>]},
+     {Conn1, reply, {error, <<"ASK ", _/binary>>}},
+     %% The cluster client follows the redirect.
+     {Conn2, command, [<<"ASKING">>]},
+     {Conn2, reply, ok},
+     {Conn2, command, [<<"GET">>, <<"foo">>]},
+     {Conn2, reply, <<"bar">>}
+    ] = EventLog,
+
+    ?assertNotEqual(Conn1, Conn2),
+    ok.
+
+t_pipeline_ask_redirect(Config) when is_list(Config) ->
+    Ports = [20001, 20002],
+    fakeredis_cluster:start_link(Ports),
+    ok = eredis_cluster:connect([{"127.0.0.1", 20001}]),
+    {ok, <<"OK">>} = eredis_cluster:q(["SET", "foo", "bar"]),
+
+    %% Now, set up an ASK redirect for foo to the other node.  First
+    %% check which node has it already and move it to the other node.
+    {moved, _Slot, Address, HomePort} =
+        fakeredis_cluster:get_redirect_by_key(<<"foo">>),
+    OtherPort = hd([P || P <- Ports, P =/= HomePort]),
+    ok = fakeredis_cluster:set_ask_redirect(<<"foo">>, Address, OtherPort),
+
+    %% Check that eredis_cluster can follow the redirect
+    ?assertEqual([{ok, <<"bar">>},
+                  {ok, <<"OK">>},
+                  {ok, <<"baz">>}],
+                 eredis_cluster:qp([["GET", "foo"],
+                                    ["SET", "foo", "baz"],
+                                    ["GET", "foo"]])),
+
+    %% Check that no additional CLUSTER SLOTS or other unexpected
+    %% connections or commands were performed.
+    EventLog = fakeredis_cluster:get_event_log(),
+    [
+     %% Inital slot mapping is fetched
+     {Conn0, connect, _},
+     {Conn0, command, [<<"CLUSTER">>, <<"SLOTS">>]},
+     {Conn0, reply, _SlotsMapping},
+     {Conn0, disconnect, normal},
+     %% Connect pools
+     {_, connect, _},
+     {_, connect, _},
+     {Conn1, command, [<<"SET">>, <<"foo">>, <<"bar">>]},
+     {Conn1, reply, ok},
+     %% Here, the ASK redirect is created.
+     {Conn1, command, [<<"GET">>, <<"foo">>]},
+     {Conn1, reply, {error, <<"ASK ", _/binary>>}},
+     {Conn1, command, [<<"SET">>, <<"foo">>, <<"baz">>]},
+     {Conn1, reply, {error, <<"ASK ", _/binary>>}},
+     {Conn1, command, [<<"GET">>,<<"foo">>]},
+     {Conn1, reply, {error, <<"ASK ", _/binary>>}},
+     %% Now, the pipeline is sent to the other node.
+     {Conn2, command, [<<"ASKING">>]},
+     {Conn2, reply, ok},
+     {Conn2, command, [<<"GET">>, <<"foo">>]},
+     {Conn2, reply, <<"bar">>},
+     {Conn2, command, [<<"ASKING">>]},
+     {Conn2, reply, ok},
+     {Conn2, command, [<<"SET">>, <<"foo">>, <<"baz">>]},
+     {Conn2, reply, ok},
+     {Conn2, command, [<<"ASKING">>]},
+     {Conn2, reply, ok},
+     {Conn2, command, [<<"GET">>,<<"foo">>]},
+     {Conn2, reply, <<"baz">>}
+    ] = EventLog,
+    ?assertNotEqual(Conn1, Conn2),
+    ok.
+
+t_moved_redirect(Config) when is_list(Config) ->
+    Ports = [20001, 20002],
+    %% Make CLUSTER SLOTS a bit slower than other commands
+    Options = [{delay, #{<<"CLUSTER">> => 200}}],
+    fakeredis_cluster:start_link(Ports, Options),
+    ok = eredis_cluster:connect([{"127.0.0.1", 20001}]),
+    {ok, <<"OK">>} = eredis_cluster:q(["SET", "foo", "bar"]),
+
+    %% Now, move "foo" to the other node.
+    fakeredis_cluster:move_all_slots(),
+
+    %% Check that eredis_cluster can follow the redirect in a pipeline
+    ?assertEqual([{ok, <<"bar">>},
+                  {ok, <<"OK">>},
+                  {ok, <<"baz">>}],
+                 eredis_cluster:qp([["GET", "foo"],
+                                    ["SET", "foo", "baz"],
+                                    ["GET", "foo"]])),
+
+    %% Wait for the slow asyncronous CLUSTER SLOTS to complete.
+    timer:sleep(300),
+
+    EventLog = fakeredis_cluster:get_event_log(),
+    [
+     %% Inital slot mapping is fetched
+     {Conn0, connect, _},
+     {Conn0, command, [<<"CLUSTER">>, <<"SLOTS">>]},
+     {Conn0, reply, _SlotsMapping},
+     {Conn0, disconnect, normal},
+     %% Connect pools
+     {_, connect, _},
+     {_, connect, _},
+     {Conn1, command, [<<"SET">>, <<"foo">>, <<"bar">>]},
+     {Conn1, reply, ok},
+     %% Here, the slot is moved.
+     {Conn1, command, [<<"GET">>, <<"foo">>]},
+     {Conn1, reply, {error, <<"MOVED ", _/binary>>}},
+     {Conn1, command, [<<"SET">>, <<"foo">>, <<"baz">>]},
+     {Conn1, reply, {error, <<"MOVED ", _/binary>>}},
+     {Conn1, command, [<<"GET">>,<<"foo">>]},
+     {Conn1, reply, {error, <<"MOVED ", _/binary>>}},
+     %% Now, the pipeline is sent to the other node.
+     {Conn2, command, [<<"GET">>, <<"foo">>]},
+     {Conn2, reply, <<"bar">>},
+     {Conn2, command, [<<"SET">>, <<"foo">>, <<"baz">>]},
+     {Conn2, reply, ok},
+     {Conn2, command, [<<"GET">>,<<"foo">>]},
+     {Conn2, reply, <<"baz">>},
+     %% The slot mapping is refreshed asynchronously, using an
+     %% existing connection. Since we have added a delay for CLUSTER
+     %% commands, it appears after all the GET and SET commands, i.e.
+     %% the redirects were followed without waiting for the slot
+     %% mappings to be refreshed.
+     {_, command, [<<"CLUSTER">>, <<"SLOTS">>]},
+     {_, reply, _UpdatedSlotsMapping}
+    ] = EventLog,
+    ?assertNotEqual(Conn1, Conn2),
+    ok.

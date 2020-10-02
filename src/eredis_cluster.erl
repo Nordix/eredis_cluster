@@ -212,7 +212,9 @@ transaction(Commands) ->
     end.
 
 %% =============================================================================
-%% @doc Multi node query
+%% @doc Multi node query. Each command in a list of commands is sent
+%% to the Redis node responsible for the key affected by that
+%% command. Only simple commands operating on a single key are supported.
 %% @end
 %% =============================================================================
 -spec qmn(Commands::redis_pipeline_command()) -> redis_pipeline_result().
@@ -222,6 +224,8 @@ qmn(_, ?REDIS_CLUSTER_REQUEST_TTL) ->
     {error, no_connection};
 qmn(Commands, Counter) ->
     throttle_retries(Counter),
+
+    %% TODO: Implement ASK redirects for qmn.
 
     {CommandsByPools, MappingInfo, Version} = split_by_pools(Commands),
     case qmn2(CommandsByPools, MappingInfo, [], Version) of
@@ -259,16 +263,33 @@ transaction(Transaction, PoolKey) ->
     Slot = get_key_slot(PoolKey),
     transaction(Transaction, Slot, undefined, 0).
 
+%% FIXME: There's no base case for the counter, so it may loop forever.
 transaction(Transaction, Slot, undefined, _) ->
-    query(Transaction, Slot, 0);
+    transaction_retry_loop(Transaction, Slot, 0);
 transaction(Transaction, Slot, ExpectedValue, Counter) ->
-    case query(Transaction, Slot, 0) of
+    case transaction_retry_loop(Transaction, Slot, 0) of
         ExpectedValue ->
             transaction(Transaction, Slot, ExpectedValue, Counter - 1);
         {ExpectedValue, _} ->
             transaction(Transaction, Slot, ExpectedValue, Counter - 1);
         Payload ->
             Payload
+    end.
+
+%% Helper for transaction/2,4 with retries and backoff like query/3.
+-spec transaction_retry_loop(Transaction  :: fun((Worker :: pid() | atom()) -> redis_result()),
+                             Slot         :: 0..16383,
+                             RetryCounter :: 0..?REDIS_CLUSTER_REQUEST_TTL) ->
+          redis_result().
+transaction_retry_loop(_, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
+    {error, no_connection};
+transaction_retry_loop(Transaction, Slot, Counter) ->
+    throttle_retries(Counter),
+    {Pool, Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+    Result = eredis_cluster_pool:transaction(Pool, Transaction),
+    case handle_transaction_result(Result, Version) of
+        retry -> transaction_retry_loop(Transaction, Slot, Counter + 1);
+        Result -> Result
     end.
 
 %% =============================================================================
@@ -333,6 +354,14 @@ scan(PoolName, Cursor, Pattern, Count, RetryCounter) ->
 
 %% =============================================================================
 
+%% Partition a list of commands by the node each command belongs to.
+%%
+%% Returns {CommandsByPools, MappingInfo, Version} where
+%%
+%%   CommandsByPools = [{Pool1, [Command1, Command2, ...]},
+%%                      {Pool2, CommandsPool2}, ...]
+%%   MappingInfo     = [{Pool1, [Command1Position, Command2Position, ...]},
+%%                      {Pool2, CommandsPool2Positions}, ...]
 split_by_pools(Commands) ->
     State = eredis_cluster_monitor:get_state(),
     split_by_pools(Commands, 1, [], [], State).
@@ -366,9 +395,7 @@ query(Command) ->
 query(_, undefined) ->
     {error, invalid_cluster_command};
 query(Command, PoolKey) ->
-    Slot = get_key_slot(PoolKey),
-    Transaction = fun(Worker) -> qw(Worker, Command) end,
-    query(Transaction, Slot, 0).
+    query(Command, PoolKey, 0).
 
 query_noreply(_, undefined) ->
     {error, invalid_cluster_command};
@@ -377,26 +404,181 @@ query_noreply(Command, PoolKey) ->
     Transaction = fun(Worker) -> qw_noreply(Worker, Command) end,
     {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
     eredis_cluster_pool:transaction(Pool, Transaction),
-    %% TODO: Retry if pool is busy?
+    %% TODO: Retry if pool is busy? Handle redirects?
     ok.
 
 query(_, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
     {error, no_connection};
-query(Transaction, Slot, Counter) ->
+query(Command, PoolKey, Counter) ->
     throttle_retries(Counter),
-
+    Slot = get_key_slot(PoolKey),
     {Pool, Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
-
-    Result = eredis_cluster_pool:transaction(Pool, Transaction),
+    Result0 = eredis_cluster_pool:transaction(Pool, fun(W) -> qw(W, Command) end),
+    Result = handle_redirects(Command, Result0, Version),
     case handle_transaction_result(Result, Version) of
-        retry -> query(Transaction, Slot, Counter + 1);
+        retry  -> query(Command, PoolKey, Counter + 1);
         Result -> Result
     end.
 
-handle_transaction_result(Result, Version) when is_list(Result) ->
-    case proplists:lookup(error, Result) of
-        none        -> Result;
-        ErrorResult -> handle_transaction_result(ErrorResult, Version)
+%% Inspects a result for ASK and MOVED redirects and, if possible,
+%% follows the redirect. If a MOVED redirect is followed, a refresh
+%% mapping is started in the background. If no redirect is followed,
+%% the original result is returned.
+-spec handle_redirects(Command :: redis_simple_command() | redis_pipeline_command(),
+                       Result  :: redis_simple_result() | redis_pipeline_result(),
+                       Version :: integer()) ->
+          redis_simple_result() | redis_pipeline_result().
+handle_redirects(Command, {error, <<"ASK ", RedirectInfo/binary>>} = Result, _Version) ->
+    %% Simple command, simple result.
+    case parse_redirect_info(RedirectInfo) of
+        {ok, Pool} ->
+            AskingPipeline = [[<<"ASKING">>], Command],
+            AskingTransaction = fun(W) -> qw(W, AskingPipeline) end,
+            case eredis_cluster_pool:transaction(Pool, AskingTransaction) of
+                [{ok, <<"OK">>}, NewResult] ->
+                    NewResult;
+                _AskingFailed ->
+                    Result
+            end;
+        {error, _NoExistingPool} ->
+            Result
+    end;
+handle_redirects(Command, {error, <<"MOVED ", RedirectInfo/binary>>} = Result, Version) ->
+    %% Simple command, simple result.
+    case parse_redirect_info(RedirectInfo) of
+        {ok, Pool} ->
+            eredis_cluster_monitor:async_refresh_mapping(Version),
+            eredis_cluster_pool:transaction(Pool, fun(W) -> qw(W, Command) end);
+        {error, _NoExistingPool} ->
+            Result
+    end;
+handle_redirects([[X|_]|_] = Command, Result, Version) when is_list(X) orelse is_binary(X),
+                                                            is_list(Result) ->
+    %% Pipeline command and pipeline result. If it contains redirects,
+    %% follow them if they are all identical and there are no other
+    %% errors in the result.
+    {Redirects, OtherErrors} =
+        lists:foldl(fun ({error, <<"MOVED ", _/binary>> = Redirect}, {RedirectAcc, OtherAcc}) ->
+                            {[Redirect|RedirectAcc], OtherAcc};
+                        ({error, <<"ASK ", _/binary>> = Redirect}, {RedirectAcc, OtherAcc}) ->
+                            {[Redirect|RedirectAcc], OtherAcc};
+                        ({error, Other}, {RedirectAcc, OtherAcc}) ->
+                            {RedirectAcc, [Other|OtherAcc]};
+                        (_, Acc) ->
+                            Acc
+                    end,
+                    {[], []},
+                    Result),
+    case {OtherErrors, lists:usort(Redirects)} of
+        {[], [Redirect]} ->
+            %% All redirects are identical and there are no other errors.
+            {RedirectType, RedirectInfo} =
+                case Redirect of
+                    <<"ASK ", AskInfo/binary>> -> {ask, AskInfo};
+                    <<"MOVED ", MovedInfo/binary>> -> {moved, MovedInfo}
+                end,
+            case {parse_redirect_info(RedirectInfo), RedirectType} of
+                {{ok, Pool}, ask} ->
+                    AskingCommand = add_asking_to_pipeline_command(Command),
+                    AskingTransaction = fun(W) -> qw(W, AskingCommand) end,
+                    AskingResult = eredis_cluster_pool:transaction(Pool, AskingTransaction),
+                    filter_out_asking_results(AskingCommand, AskingResult);
+                {{ok, Pool}, moved} ->
+                    eredis_cluster_monitor:async_refresh_mapping(Version),
+                    eredis_cluster_pool:transaction(Pool, fun(W) -> qw(W, Command) end);
+                _NoExistingPool ->
+                    %% Don't redirect.
+                    Result
+            end;
+        _OtherErrorsOrMultipleDifferentRedirects ->
+            %% Don't redirect in this case.
+            Result
+    end;
+handle_redirects(_Command, Result, _Version) ->
+    %% E.g. error result
+    Result.
+
+%% If ASKING has been added to a pipeline command, remove the ASKING
+%% results from the corresponding pipeline result list.
+filter_out_asking_results(Commands, Results) when is_list(Results) ->
+    filter_out_asking_results(Commands, Results, []);
+filter_out_asking_results(_Commands, ErrorResult) when not is_list(ErrorResult) ->
+    ErrorResult.
+
+filter_out_asking_results([[<<"ASKING">>] | Commands], [{ok, <<"OK">>} | Results], Acc) ->
+    filter_out_asking_results(Commands, Results, Acc);
+filter_out_asking_results([_Command | Commands], [Result | Results], Acc) ->
+    filter_out_asking_results(Commands, Results, [Result | Acc]);
+filter_out_asking_results([], [], Acc) ->
+    lists:reverse(Acc);
+filter_out_asking_results(_Commands, _Results, _Acc) ->
+    %% Length of commands and length of results mismatch
+    {error, redirect_failed}.
+
+%% Adds ASKING before every command, except inside a MULTI-command.
+add_asking_to_pipeline_command([Command|Commands]) ->
+    case string:uppercase(iolist_to_binary(Command)) of
+        <<"MULTI">> ->
+            {Transaction, AfterTransaction} = lists:splitwith(
+                                                fun is_not_exec_or_discard/1,
+                                                Commands),
+            [[<<"ASKING">>], Command | Transaction] ++
+                add_asking_to_pipeline_command(AfterTransaction);
+        _NotMulti ->
+            [[<<"ASKING">>], Command | add_asking_to_pipeline_command(Commands)]
+    end;
+add_asking_to_pipeline_command([]) ->
+    [].
+
+is_not_exec_or_discard([Command]) ->
+    case string:uppercase(iolist_to_binary(Command)) of
+        <<"EXEC">> -> false;
+        <<"DISCARD">> -> false;
+        _Other -> true
+    end;
+is_not_exec_or_discard(_Command) ->
+    true.
+
+%% Parses the Rest as in <<"ASK ", Rest/binary>> and returns an
+%% existing pool if any or an error.
+-spec parse_redirect_info(RedirectInfo :: binary()) ->
+          {ok, ExistingPool :: atom()} | {error, any()}.
+parse_redirect_info(RedirectInfo) ->
+    try
+        [_Slot, AddrPort] = binary:split(RedirectInfo, <<" ">>),
+        [Addr0, PortBin] = binary:split(AddrPort, <<":">>),
+        Port = binary_to_integer(PortBin),
+        Addr = case Addr0 of
+                   <<"[", IPv6:(byte_size(Addr0) - 2)/binary, "]">> ->
+                       %% An IPv6 address wrapped in square brackets.
+                       IPv6;
+                   _ ->
+                       Addr0
+               end,
+        eredis_cluster_pool:get_existing_pool(Addr, Port)
+    of
+        {ok, Pool} ->
+            {ok, Pool};
+        {error, _} = Error ->
+            Error
+    catch
+        error:{badmatch, _} ->
+            %% Couldn't parse using binary:split/2.
+            {error, bad_redirect};
+        error:badarg ->
+            %% binary_to_integer/1 failed
+            {error, bad_redirect}
+    end.
+
+handle_transaction_result(Results, Version) when is_list(Results) ->
+    %% Consider all errors, to make sure slot mapping is updated if
+    %% needed. (Multiple slot mapping updates have no effect if the
+    %% Version is the same.)
+    HandledResults = [handle_transaction_result(Result, Version)
+                      || Result <- Results],
+    case lists:member(retry, HandledResults) of
+        true  -> retry;
+        false -> Results
     end;
 handle_transaction_result(Result, Version) ->
     case Result of

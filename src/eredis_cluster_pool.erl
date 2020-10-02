@@ -3,6 +3,7 @@
 
 %% API.
 -export([create/3]).
+-export([get_existing_pool/2]).
 -export([stop/1]).
 -export([transaction/2]).
 
@@ -34,6 +35,20 @@ create(Host, Port, Options) ->
             {Result, PoolName};
         _ ->
             {ok, PoolName}
+    end.
+
+-spec get_existing_pool(Host :: string() | binary(),
+                        Port :: inet:port_number()) ->
+          {ok, Pool :: atom()} | {error, no_pool}.
+get_existing_pool(Host, Port) when is_binary(Host) ->
+    get_existing_pool(binary_to_list(Host), Port);
+get_existing_pool(Host, Port) when is_list(Host) ->
+    Pool = get_name(Host, Port),
+    case whereis(Pool) of
+        Pid when is_pid(Pid) ->
+            {ok, Pool};
+        _NoPid ->
+            {error, no_pool}
     end.
 
 -spec transaction(PoolName::atom(), fun((Worker::pid()) -> redis_result())) ->

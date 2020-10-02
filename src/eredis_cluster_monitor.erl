@@ -4,7 +4,7 @@
 %% API.
 -export([start_link/0]).
 -export([connect/2, disconnect/1]).
--export([refresh_mapping/1]).
+-export([refresh_mapping/1, async_refresh_mapping/1]).
 -export([get_state/0, get_state_version/1]).
 -export([get_pool_by_slot/1, get_pool_by_slot/2]).
 -export([get_all_pools/1]).
@@ -46,6 +46,9 @@ disconnect(PoolNodes) ->
 
 refresh_mapping(Version) ->
     gen_server:call(?MODULE, {reload_slots_map, Version}).
+
+async_refresh_mapping(Version) ->
+    gen_server:cast(?MODULE, {reload_slots_map, Version}).
 
 -spec get_state() -> #state{}.
 get_state() ->
@@ -453,6 +456,7 @@ init(_Args) ->
 handle_call({reload_slots_map, Version}, _From, #state{version=Version} = State) ->
     {reply, ok, reload_slots_map(State)};
 handle_call({reload_slots_map, _}, _From, State) ->
+    %% Mismatching version. Slots map already reloaded.
     {reply, ok, State};
 handle_call({connect, InitServers, Options}, _From, State) ->
     {reply, ok, connect_(InitServers, Options, State)};
@@ -461,6 +465,11 @@ handle_call({disconnect, PoolNodes}, _From, State) ->
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 
+handle_cast({reload_slots_map, Version}, #state{version = Version} = State) ->
+    {noreply, reload_slots_map(State)};
+handle_cast({reload_slots_map, _OldVersion}, State) ->
+    %% Mismatching version. Slots map already reloaded.
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
