@@ -546,15 +546,18 @@ is_not_exec_or_discard(_Command) ->
 parse_redirect_info(RedirectInfo) ->
     try
         [_Slot, AddrPort] = binary:split(RedirectInfo, <<" ">>),
-        [Addr0, PortBin] = binary:split(AddrPort, <<":">>),
+        [Addr0, PortBin] = string:split(AddrPort, ":", trailing),
         Port = binary_to_integer(PortBin),
+        IPv6Size = byte_size(Addr0) - 2, %% Size of address possibly without 2 brackets
         Addr = case Addr0 of
-                   <<"[", IPv6:(byte_size(Addr0) - 2)/binary, "]">> ->
+                   <<"[", IPv6:IPv6Size/binary, "]">> ->
                        %% An IPv6 address wrapped in square brackets.
                        IPv6;
                    _ ->
                        Addr0
                end,
+        %% Validate the address string
+        {ok, _} = inet:parse_address(binary:bin_to_list(Addr)),
         eredis_cluster_pool:get_existing_pool(Addr, Port)
     of
         {ok, Pool} ->
@@ -563,7 +566,7 @@ parse_redirect_info(RedirectInfo) ->
             Error
     catch
         error:{badmatch, _} ->
-            %% Couldn't parse using binary:split/2.
+            %% Couldn't parse or validate the address
             {error, bad_redirect};
         error:badarg ->
             %% binary_to_integer/1 failed
@@ -843,3 +846,35 @@ get_key_from_rest([_, KeyName|_]) when is_list(KeyName) ->
     KeyName;
 get_key_from_rest(_) ->
     undefined.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+parse_redirect_info_test() ->
+    %% Address and port can be parsed
+    {error, no_pool} = parse_redirect_info(<<"1 127.0.0.1:12345">>),
+    {error, no_pool} = parse_redirect_info(<<"1 ::1:12345">>),
+    {error, no_pool} = parse_redirect_info(<<"1 [::1]:12345">>),
+    {error, no_pool} = parse_redirect_info(<<"77 2001:db8::0:1:1">>),
+    {error, no_pool} = parse_redirect_info(<<"77 [2001:db8::0:1]:1">>),
+    {error, no_pool} = parse_redirect_info(<<"88 2001:db8::1:0:0:1:6666">>),
+    {error, no_pool} = parse_redirect_info(<<"88 [2001:db8::1:0:0:1]:6666">>), %% same as previous with []
+    {error, no_pool} = parse_redirect_info(<<"88 2001:db8:0:0:1::1:6666">>),   %% same as previous but different
+    {error, no_pool} = parse_redirect_info(<<"88 [2001:db8:0:0:1::1]:6666">>), %% same as previous with []
+    {error, no_pool} = parse_redirect_info(<<"99 [2001:db8:85a3:8d3:1319:8a2e:370:7348]:443">>),
+    {error, no_pool} = parse_redirect_info(<<"99 2001:db8:85a3:8d3:1319:8a2e:370:7348:443">>),
+
+    %% Parse fail
+    {error, bad_redirect} = parse_redirect_info(<<"1">>),          %% Address and port missing
+    {error, bad_redirect} = parse_redirect_info(<<"1 ">>),         %% Address and port missing
+    {error, bad_redirect} = parse_redirect_info(<<"33 ::1">>),     %% : and port missing
+    {error, bad_redirect} = parse_redirect_info(<<"33 [::1]">>),   %% : and port missing
+    {error, bad_redirect} = parse_redirect_info(<<"44 ::1:">>),    %% Port missing
+    {error, bad_redirect} = parse_redirect_info(<<"44 [::1]:">>),  %% Port missing
+    {error, bad_redirect} = parse_redirect_info(<<"31 :1:45">>),   %% : missing (or : and port)
+    {error, bad_redirect} = parse_redirect_info(<<"31 [:1]:45">>), %% : missing
+    {error, bad_redirect} = parse_redirect_info(<<"40 [::]">>),    %% address and port missing
+    {error, bad_redirect} = parse_redirect_info(<<"99 [2001:db8:85a3:8d3:1319:8a2e:370:7348]">>), %% Port missing
+    {error, bad_redirect} = parse_redirect_info(<<"99 2001:db8:85a3:8d3:1319:8a2e:370:7348">>).   %% Port missing
+
+-endif.
