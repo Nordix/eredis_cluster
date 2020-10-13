@@ -732,8 +732,10 @@ eval(Script, ScriptHash, Keys, Args) ->
     case qk(EvalShaCommand, Key) of
         {error, <<"NOSCRIPT", _/binary>>} ->
             LoadCommand = ["SCRIPT", "LOAD", Script],
-            [_, Result] = qk([LoadCommand, EvalShaCommand], Key),
-            Result;
+            case qk([LoadCommand, EvalShaCommand], Key) of
+                [_LoadResult, EvalResult] -> EvalResult;
+                Result -> Result
+            end;
         Result ->
             Result
     end.

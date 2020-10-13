@@ -15,6 +15,7 @@
         , t_ask_redirect/1
         , t_pipeline_ask_redirect/1
         , t_moved_redirect/1
+        , t_eval_failure_handling/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -314,4 +315,22 @@ t_moved_redirect(Config) when is_list(Config) ->
      {_, reply, _UpdatedSlotsMapping}
     ] = EventLog,
     ?assertNotEqual(Conn1, Conn2),
+    ok.
+
+t_eval_failure_handling(Config) when is_list(Config) ->
+    %% eval consists of two steps, first an EVALSHA that tries to run an already loaded script, if that
+    %% fails it loads the script via SCRIPT LOAD.
+    %% This testcase triggers a socket disconnection right before the script loading.
+    Port = 20011,
+    fakeredis_cluster:start_link([Port]),
+    ?assertMatch(ok, eredis_cluster:connect([{"127.0.0.1", Port}])),
+
+    Script = <<"return redis.call('SET', KEYS[1], ARGV[1]);">>,
+    ScriptHash = << << if N >= 10 -> N -10 + $a; true -> N + $0 end >> || <<N:4>> <= crypto:hash(sha, Script) >>,
+    Key = "evalkey",
+
+    Slot = fakeredis_hash:hash(Key),
+    {_, Port} = fakeredis_cluster:get_node_by_slot(Slot),
+    fakeredis_cluster:kill_node_on_command(Port, <<"SCRIPT">>),
+    ?assertMatch({error, no_connection}, eredis_cluster:eval(Script, ScriptHash, [Key], ["value"])),
     ok.
