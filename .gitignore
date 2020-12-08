@@ -10,4 +10,7 @@ rel/example_project
 .rebar
 _build/
 priv/
-doc/
+/doc/README.md
+/doc/erlang.png
+/doc/edoc-info
+/doc/stylesheet.css

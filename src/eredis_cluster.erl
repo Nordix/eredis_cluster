@@ -1,3 +1,12 @@
+%% @doc
+%%
+%% This module provides the API of `eredis_cluster'.
+%%
+%% The `eredis_cluster' application is a Redis Cluster client. For each of the
+%% nodes in a connected Redis cluster, a connection pool is maintained. In this
+%% manual, the words "pool" and "node" are used interchangeably when referring
+%% to the connection pool to a particular Redis node.
+%%
 -module(eredis_cluster).
 -behaviour(application).
 
@@ -9,18 +18,18 @@
 %% Management
 -export([connect/1, connect/2, disconnect/1]).
 
-% Generic redis call
+%% Generic redis call
 -export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qa2/1, qw/2, qmn/1]).
 -export([transaction/1, transaction/2]).
 
-% Specific redis command implementation
+%% Specific redis command implementation
 -export([flushdb/0, load_script/1, scan/4]).
+-export([eval/4]).
 
- % Helper functions
+%% Convenience functions
 -export([update_key/2]).
 -export([update_hash_field/3]).
 -export([optimistic_locking_transaction/3]).
--export([eval/4]).
 -export([get_pool_by_command/1, get_pool_by_key/1]).
 
 -ifdef(TEST).
@@ -30,64 +39,96 @@
 -include("eredis_cluster.hrl").
 
 %% @doc Start application.
+%%
+%% The same as `application:start(eredis_cluster)'.
+%%
+%% If `eredis_cluster' is configured with init nodes using the application
+%% environment, using a config file or by explicitly by calling
+%% `application:set_env(eredis_cluster, init_nodes, InitNodes)', the cluster is
+%% connected when the application is started. Otherwise, it can be connected
+%% later using `connect/1,2'.
 -spec start() -> ok | {error, Reason::term()}.
 start() ->
     application:start(?MODULE).
 
 %% @doc Stop application.
+%%
+%% The same as `application:stop(eredis_cluster)'.
 -spec stop() -> ok | {error, Reason::term()}.
 stop() ->
     application:stop(?MODULE).
 
-
+%% @private
 %% @doc Application behaviour callback
 -spec start(StartType::application:start_type(), StartArgs::term()) ->
     {ok, pid()}.
 start(_Type, _Args) ->
     eredis_cluster_sup:start_link().
 
+%% @private
 %% @doc Application behaviour callback
 -spec stop(State::term()) -> ok.
 stop(_State) ->
     ok.
 
 %% =============================================================================
-%% @doc Connect to a set of init nodes, useful if the cluster configuration is
-%% not known at startup
+%% @doc Connect to a Redis cluster using a set of init nodes.
+%%
+%% This is useful if the cluster configuration is not known when the application
+%% is started.
+%%
+%% Not all Redis nodes need to be provided. The addresses and port of the nodes
+%% in the cluster are retrieved from one of the init nodes.
 %% @end
 %% =============================================================================
--spec connect(InitServers::term()) -> Result::term().
+-spec connect(InitServers) -> ok
+              when InitServers :: [{Address :: string(),
+                                    Port :: inet:port_number()}].
 connect(InitServers) ->
     connect(InitServers, []).
 
--spec connect(InitServers::term(), Options::options()) -> Result::term().
+%% =============================================================================
+%% @doc Connects to a Redis cluster using a set of init nodes, with options.
+%%
+%% Useful if the cluster configuration is not known at startup. The options, if
+%% provided, can be used to override options set using `application:set_env/3'.
+%% @end
+%% =============================================================================
+-spec connect(InitServers, Options) -> ok
+              when InitServers :: [{Address :: string(),
+                                    Port :: inet:port_number()}],
+                   Options :: options().
 connect(InitServers, Options) ->
     eredis_cluster_monitor:connect(InitServers, Options).
 
 %% =============================================================================
-%% @doc Disconnect with a set of nodes.
+%% @doc Disconnects a set of nodes.
 %% @end
 %% =============================================================================
--spec disconnect(PoolNodes::term()) -> Result::term().
-disconnect(PoolNodes) ->
-    eredis_cluster_monitor:disconnect(PoolNodes).
+-spec disconnect(Nodes :: [atom()]) -> ok.
+disconnect(Nodes) ->
+    eredis_cluster_monitor:disconnect(Nodes).
 
 %% =============================================================================
-%% @doc This function execute simple or pipelined command on a single redis node
-%% the node will be automatically found according to the key used in the command
+%% @doc This function executes simple or pipelined command on a single redis
+%% node, which is selected according to the first key in the command.
 %% @end
 %% =============================================================================
 -spec q(Command::redis_command()) -> redis_result().
 q(Command) ->
     query(Command).
 
--spec qk(Command::redis_command(), PoolKey::bitstring()) -> redis_result().
-qk(Command, PoolKey) ->
-    query(Command, PoolKey).
+%% @doc Executes a simple or pipeline of command on the Redis node where the
+%% provided key resides.
+-spec qk(Command::redis_command(), Key::anystring()) -> redis_result().
+qk(Command, Key) ->
+    query(Command, Key).
 
 %% =============================================================================
-%% @doc Execute simple or pipelined commands on a single Redis node, but
+%% @doc Executes a simple or pipeline of commands on a single Redis node, but
 %% ignoring any response from Redis. (Fire and forget)
+%%
+%% Errors are ignored and there are no automatic retries.
 %% @end
 %% =============================================================================
 -spec q_noreply(Command::redis_command()) -> ok.
@@ -96,18 +137,24 @@ q_noreply(Command) ->
     query_noreply(Command, PoolKey).
 
 %% =============================================================================
-%% @doc Wrapper function for command using pipelined commands
+%% @doc Executes a pipeline of commands.
+%%
+%% This function is identical to `q(Commands)'.
+%% @see q/1
 %% @end
 %% =============================================================================
 -spec qp(Commands::redis_pipeline_command()) -> redis_pipeline_result().
 qp(Commands) -> q(Commands).
 
 %% =============================================================================
-%% @doc Perform a given query on all node of a redis cluster
-%% When a query to a master fail refresh the mapping and try again.
+%% @doc Performs a query on all nodes in the cluster. When a query to a master
+%% fails, the mapping is refreshed and the query is retried.
 %% @end
 %% =============================================================================
--spec qa(Command::redis_command()) -> [redis_transaction_result()] | {error, no_connection}.
+-spec qa(Command) -> Result
+              when Command :: redis_command(),
+                   Result  :: [redis_transaction_result()] |
+                              {error, no_connection}.
 qa(Command) -> qa(Command, 0, []).
 
 qa(_, ?REDIS_CLUSTER_REQUEST_TTL, Res) ->
@@ -142,7 +189,10 @@ qa(Command, Counter, Res) ->
 %% When a query to the master fail refresh the mapping and try again.
 %% @end
 %% =============================================================================
--spec qa2(Command::redis_command()) -> [{atom(), redis_result()}] | {error, no_connection}.
+-spec qa2(Command) -> Result
+              when Command :: redis_command(),
+                   Result  :: [{Node :: atom(), redis_result()}] |
+                              {error, no_connection}.
 qa2(Command) -> qa2(Command, 0, []).
 
 qa2(_, ?REDIS_CLUSTER_REQUEST_TTL, Res) ->
@@ -181,24 +231,31 @@ qa2(Command, Counter, Res) ->
     end.
 
 %% =============================================================================
-%% @doc Wrapper function to be used for direct call to a pool worker in the
-%% function passed to the transaction/2 method
+%% @doc Function to be used for direct calls to an `eredis' connection instance
+%% (a worker) in the function passed to the `transaction/2' function.
+%%
+%% This function calls `eredis:qp/2' for pipelines of commands and `eredis:q/1'
+%% for single commands. It is also possible to use `eredis' directly.
+%% @see transaction/2
 %% @end
 %% =============================================================================
--spec qw(Worker::pid(), redis_command()) -> redis_result().
-qw(Worker, [[X|_]|_] = Commands) when is_list(X); is_binary(X) ->
-    eredis:qp(Worker, Commands);
+-spec qw(Connection :: pid(), redis_command()) -> redis_result().
+qw(Connection, [[X|_]|_] = Commands) when is_list(X); is_binary(X) ->
+    eredis:qp(Connection, Commands);
+qw(Connection, Command) ->
+    eredis:q(Connection, Command).
 
-qw(Worker, Command) ->
-    eredis:q(Worker, Command).
-
--spec qw_noreply(Worker::pid(), Command::redis_command()) -> ok.
-qw_noreply(Worker, Command) ->
-    eredis:q_noreply(Worker, Command).
+-spec qw_noreply(Connection::pid(), Command::redis_command()) -> ok.
+qw_noreply(Connection, Command) ->
+    eredis:q_noreply(Connection, Command).
 
 %% =============================================================================
-%% @doc Wrapper function to execute a pipeline command as a transaction Command
-%% (it will add MULTI and EXEC command)
+%% @doc Function to execute a pipeline of commands as a transaction command, by
+%% wrapping it in MULTI and EXEC. Returns the result of EXEC, which is the list
+%% of responses for each of the commands.
+%%
+%% `transaction(Commands)' is equivalent to calling `q([["MULTI"]] ++ Commands
+%% ++ [["EXEC"]])' and taking the last element in the resulting list.
 %% @end
 %% =============================================================================
 -spec transaction(Commands::redis_pipeline_command()) -> redis_transaction_result().
@@ -251,16 +308,25 @@ qmn2([], [], Acc, _) ->
     [Res || {_, Res} <- SortedAcc].
 
 %% =============================================================================
-%% @doc Execute a function on a pool worker. This function should be use when
-%% transaction method such as WATCH or DISCARD must be used. The pool used to
-%% execute the transaction is specified by giving a key that this pool is
-%% containing.
+%% @doc Execute a function on a single connection. This should be used when a
+%% transaction command such as WATCH or DISCARD must be used. The node is
+%% selected by giving a key that this node is containing. Note that this
+%% function does not add MULTI or EXEC, so it can be used also for sequences of
+%% commands which are not Redis transactions.
+%%
+%% The `Transaction' fun shall use `qw/2' to execute commands on the selected
+%% connection pid passed to it.
+%%
+%% A transaction can be retried automatically, so the `Transaction' fun should
+%% not have side effects.
+%%
+%% @see qw/2
 %% @end
 %% =============================================================================
--spec transaction(Transaction::fun((Worker::pid()) -> redis_result()),
-                  PoolKey::bitstring()) -> any().
-transaction(Transaction, PoolKey) ->
-    Slot = get_key_slot(PoolKey),
+-spec transaction(Transaction :: fun((Connection :: pid()) -> redis_result()),
+                  Key :: anystring()) -> any().
+transaction(Transaction, Key) ->
+    Slot = get_key_slot(Key),
     transaction(Transaction, Slot, undefined, 0).
 
 %% FIXME: There's no base case for the counter, so it may loop forever.
@@ -294,6 +360,8 @@ transaction_retry_loop(Transaction, Slot, Counter) ->
 
 %% =============================================================================
 %% @doc Perform flushdb command on each node of the redis cluster
+%%
+%% This is equivalent to calling `qa(["FLUSHDB"])' except for the return value.
 %% @end
 %% =============================================================================
 -spec flushdb() -> ok | {error, Reason::bitstring()}.
@@ -309,6 +377,15 @@ flushdb() ->
 
 %% =============================================================================
 %% @doc Load LUA script to all master nodes in the Redis cluster.
+%%
+%% Returns `{ok, SHA1}' on success and an error otherwise.
+%%
+%% This is equivalent to calling `qa(["SCRIPT", "LOAD", Script])' except for the
+%% return value.
+%%
+%% A script loaded in this way can be executed using eval/4.
+%%
+%% @see eval/4
 %% @end
 %% =============================================================================
 -spec load_script(Script::string()) -> redis_result().
@@ -328,13 +405,38 @@ load_script(Script) ->
     end.
 
 %% =============================================================================
-%% @doc Perform scan command on a specific node in the Redis cluster.
+%% @doc Performs a SCAN on a specific node in the Redis cluster.
+%%
+%% This is conceptually equivalent to calling `qw(Connection, ["SCAN", Cursor,
+%% "MATCH", Pattern, "COUNT", Count])' on a connection to the specified node.
+%%
+%% To scan all nodes in the cluser, use `eredis_cluster_monitor:get_all_pools/0'
+%% to retrieve the nodes.
+%%
+%% To retrieve a node where a particular key is stored, use `get_pool_by_key/1'.
+%%
+%% @see eredis_cluster_monitor:get_all_pools/0
+%% @see get_pool_by_key/1
 %% @end
+%%
+%% TODO: Add funcions to be able to execute arbitrary commands on a specific
+%% node, with retries. Then, implement scan/4 using that function. Currently the
+%% undocumented eredis_cluster_pool:transaction/2 does this but without retries.
+%%
+%% Idea: Allow transaction/2 to take a pool (atom) instead of a key:
+%% transaction(Fun, KeyOrPool).
+%%
+%% Suggested functions to add to the API: qn(Node, Command)
 %% =============================================================================
--spec scan(PoolName::atom(), Cursor::integer(), Pattern::string(), Count::integer())
-          -> redis_result() | {error, Reason::bitstring()}.
-scan(PoolName, Cursor, Pattern, Count) when is_list(Pattern) ->
-    scan(PoolName, Cursor, Pattern, Count, 0).
+-spec scan(Node, Cursor, Pattern, Count) -> Result
+              when Node :: atom(),
+                   Cursor :: integer(),
+                   Pattern :: string(),
+                   Count :: integer(),
+                   Result :: redis_result() |
+                             {error, Reason :: binary() | atom()}.
+scan(Node, Cursor, Pattern, Count) when is_list(Pattern) ->
+    scan(Node, Cursor, Pattern, Count, 0).
 
 scan(_, _, _, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
     {error, no_connection};
@@ -637,11 +739,15 @@ throttle_retries(_) -> timer:sleep(?REDIS_RETRY_DELAY).
 
 %% =============================================================================
 %% @doc Update the value of a key by applying the function passed in the
-%% argument. The operation is done atomically
+%% argument. The operation is done atomically, using an optimistic locking
+%% transaction.
+%% @see optimistic_locking_transaction/3
 %% @end
 %% =============================================================================
--spec update_key(Key::anystring(), UpdateFunction::fun((any()) -> any())) ->
-    redis_transaction_result().
+-spec update_key(Key, UpdateFunction) -> Result
+              when Key            :: anystring(),
+                   UpdateFunction :: fun((any()) -> any()),
+                   Result         :: redis_transaction_result().
 update_key(Key, UpdateFunction) ->
     UpdateFunction2 = fun(GetResult) ->
         {ok, Var} = GetResult,
@@ -657,12 +763,17 @@ update_key(Key, UpdateFunction) ->
 
 %% =============================================================================
 %% @doc Update the value of a field stored in a hash by applying the function
-%% passed in the argument. The operation is done atomically
+%% passed in the argument. The operation is done atomically using an optimistic
+%% locking transaction.
+%% @see optimistic_locking_transaction/3
 %% @end
 %% =============================================================================
--spec update_hash_field(Key::anystring(), Field::anystring(),
-    UpdateFunction::fun((any()) -> any())) ->
-          {ok, {[any()], any()}} | {error, redis_error_result()}.
+-spec update_hash_field(Key, Field, UpdateFunction) -> Result
+              when Key            :: anystring(),
+                   Field          :: anystring(),
+                   UpdateFunction :: fun((any()) -> any()),
+                   Result         :: {ok, {[any()], any()}} |
+                                     {error, redis_error_result()}.
 update_hash_field(Key, Field, UpdateFunction) ->
     UpdateFunction2 = fun(GetResult) ->
         {ok, Var} = GetResult,
@@ -677,15 +788,32 @@ update_hash_field(Key, Field, UpdateFunction) ->
     end.
 
 %% =============================================================================
-%% @doc Optimistic locking transaction helper, based on Redis documentation :
-%% http://redis.io/topics/transactions
+%% @doc Optimistic locking transaction, based on Redis documentation:
+%% https://redis.io/topics/transactions
+%%
+%% The function operates like the following pseudo-code:
+%%
+%% <pre>
+%% WATCH WatchedKey
+%% value = GetCommand
+%% MULTI
+%% UpdateFunction(value)
+%% EXEC
+%% </pre>
+%%
+%% If the value associated with WatchedKey has changed between GetCommand and
+%% EXEC, the sequence is retried.
 %% @end
 %% =============================================================================
--spec optimistic_locking_transaction(WatchedKey :: anystring(),
-                                     GetCommand :: redis_command(),
-                                     UpdateFunction :: fun((redis_result()) -> redis_pipeline_command())) ->
-          {ok, {redis_success_result(), any()}} | {ok, {[redis_success_result()], any()}}
-          | optimistic_locking_error_result().
+-spec optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
+          Result
+              when WatchedKey :: anystring(),
+                   GetCommand :: redis_command(),
+                   UpdateFunction :: fun((redis_result()) ->
+                                                redis_pipeline_command()),
+                   Result :: {ok, {redis_success_result(), any()}} |
+                             {ok, {[redis_success_result()], any()}} |
+                             optimistic_locking_error_result().
 optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
     Slot = get_key_slot(WatchedKey),
     Transaction = fun(Worker) ->
@@ -717,10 +845,22 @@ optimistic_locking_transaction(WatchedKey, GetCommand, UpdateFunction) ->
 %% @doc Eval command helper, to optimize the query, it will try to execute the
 %% script using its hashed value. If no script is found, it will load it and
 %% try again.
+%%
+%% The `ScriptHash' is provided by `load_script/1', which can be used to
+%% pre-load the script on all nodes.
+%%
+%% The first key in `Keys' is used for selecting the Redis node where the script
+%% is executed. If `Keys' is an empty list, the script is executed on an arbitrary
+%% Redis node.
+%%
+%% @see load_script/1
 %% @end
 %% =============================================================================
--spec eval(Script :: bitstring(), ScriptHash :: bitstring(), Keys :: [bitstring()],
-           Args :: [bitstring()]) -> redis_result().
+-spec eval(Script, ScriptHash, Keys, Args) -> redis_result()
+              when Script     :: anystring(),
+                   ScriptHash :: anystring(),
+                   Keys       :: [anystring()],
+                   Args       :: [anystring()].
 eval(Script, ScriptHash, Keys, Args) ->
     KeyNb = length(Keys),
     EvalShaCommand = ["EVALSHA", ScriptHash, integer_to_binary(KeyNb)] ++ Keys ++ Args,
@@ -741,7 +881,11 @@ eval(Script, ScriptHash, Keys, Args) ->
     end.
 
 %% =============================================================================
-%% @doc Returns the pool for a command.
+%% @doc Returns the connection pool for the Redis node where a command should be
+%% executed.
+%%
+%% The node is selected based on the first key in the command.
+%% @see get_pool_by_key/1
 %% @end
 %% =============================================================================
 -spec get_pool_by_command(Command::redis_command()) -> atom() | undefined.
@@ -750,7 +894,7 @@ get_pool_by_command(Command) ->
     get_pool_by_key(Key).
 
 %% =============================================================================
-%% @doc Returns the pool for a key.
+%% @doc Returns the connection pool for the Redis node responsible for the key.
 %% @end
 %% =============================================================================
 -spec get_pool_by_key(Key::anystring()) -> atom() | undefined.

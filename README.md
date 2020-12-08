@@ -7,32 +7,32 @@ eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
 Improvements compared to `adrienmo/eredis_cluster`:
 
 * Support of TLS introduced in Redis 6
-* Uses Nordix/eredis
+* Uses [Nordix/eredis](https://github.com/Nordix/eredis) (socket error handling fixes)
 * Many Dialyzer corrections
 * Elvis code formatting
+* Optimizations
+  * Refresh slot mapping reuses existing connection when
+    possible and don't refresh mapping when not needed, e.g. when a pool is busy
+  * Don't use an extra wrapper process around each eredis connection process
 * Containerized testing
-* Added APIs:
-  - `connect/2`             - Connect to init nodes, with options
-  - `qa2/1`                 - query all nodes with re-attempts, returns [{Node, Result},..]
-  - `q_noreply/1`           - query a single Redis instance but wont wait for its result
-  - `load_script/1`         - pre-load script to all Redis instances
-  - `scan/4`                - Perform a scan command on given Redis instance
-  - `disconnect/1`          - disconnect from given Redis instances
-  - `get_pool_by_command/1` - get which Redis pool that handles a given command
-  - `get_pool_by_key/1`     - get which Redis pool that handles a given key
-  - `get_cluster_nodes/0`   - get cluster nodes information list (CLUSTER NODES)
-  - `get_cluster_slots/0`   - get cluster slots information (CLUSTER SLOTS)
+* Testing using [similated eredis cluster](https://github.com/Nordix/fakeredis_cluster) for corner cases such as ASK redirects
+* Added API functions:
+  - `connect/2`:              Connect to init nodes, with options
+  - `qa2/1`:                  Query all nodes with re-attempts, returns
+                              `[{Node, Result}, ...]`
+  - `q_noreply/1`:            Query a single Redis instance but wont wait for its result
+  - `load_script/1`:          Pre-load script to all Redis instances
+  - `scan/4`:                 Perform a scan command on given Redis instance
+  - `disconnect/1`:           Disconnect from given Redis instances
+  - `get_pool_by_command/1`:  Get which Redis pool that handles a given command
+  - `get_pool_by_key/1`:      Get which Redis pool that handles a given key
+  - `eredis_cluster_monitor:get_cluster_nodes/0`: Get cluster nodes information
+    list (CLUSTER NODES)
+  - `eredis_cluster_monitor:get_cluster_slots/0`: Get cluster slots information
+    (CLUSTER SLOTS)
 * Changed behaviour:
-  - `qa/1`                  - query all nodes, now with re-attempts
-  - `get_cluster_slots/2`   - Gives descriptive errors when failing
-
-## TODO
-
-- Correct last Dialyzer warnings
-- Improve test coverage
-- `get_cluster_slots/2`, throw a reply?, improve tests
-- Improve test suite to demonstrate the case where Redis cluster is crashing,
-  resharding, recovering...
+  - `qa/1`:                   Query all nodes, now with re-attempts
+  - `eredis_cluster_monitor:get_all_pools/0`: Doesn't include duplicates.
 
 ## Compilation and tests
 
@@ -97,10 +97,10 @@ eredis_cluster:connect([{"127.0.0.1", 30001},
                         {"127.0.0.1", 30002}]).
 ```
 
-#### Alternative: set overriding options when calling connect
+### Configuring using connect/2
 
-It is also possible to give options while doing a connect using `eredis_cluster:connect/2` instead.
-The given options will precede options set via application configuration,
+It is also possible to give options while doing a connect using `eredis_cluster:connect/2`.
+The given options will override options set via application configuration,
 i.e will be prepended to the property list.
 
 ```erlang
@@ -114,7 +114,8 @@ eredis_cluster:connect([{"127.0.0.1", 30001},
 ## Usage
 
 ```erlang
-%% Start the application
+%% Start the application and, if init nodes are defined in the application
+%% configuration, connect to the cluster
 eredis_cluster:start().
 
 %% Simple command
@@ -180,10 +181,14 @@ eredis_cluster:qk(["FLUSHDB"], "TEST").
 
 ## Troubleshooting
 
-Following Redis-log indicates that Redis accepts TLS, but the client is not configured for TLS.
+The following Redis-log indicates that Redis accepts TLS, but the client is not configured for TLS.
 
 ```
 # Error accepting a client connection: error:1408F10B:SSL routines:ssl3_get_record:wrong version number (conn: fd=12)
 ```
 
 Debug logging for TLS connections can be enabled in eredis_cluster by the connect option: `{log_level, debug}`
+
+## See also
+
+* Generated documentation: [doc/eredis_cluster.md](doc/eredis_cluster.md)

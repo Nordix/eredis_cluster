@@ -1,3 +1,4 @@
+%% @private
 -module(eredis_cluster_sup).
 -behaviour(supervisor).
 

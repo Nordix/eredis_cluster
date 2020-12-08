@@ -48,7 +48,7 @@ coverview: cover
 	xdg-open _build/test/cover/index.html
 
 edoc:
-	@$(REBAR) skip_deps=true doc
+	@$(REBAR) edoc
 
 help:
 	@echo "Please use 'make <target>' where <target> is one of"
@@ -56,6 +56,7 @@ help:
 	@echo "  stop              stops all redis servers"
 	@echo "  travis-run        starts the redis cluster and runs your tests"
 	@echo "  travis-install    install redis from 'unstable' branch"
+	@echo "  edoc, elvis, cover and more..."
 
 start: start-tcp start-tls
 

@@ -1,7 +1,14 @@
+%% @doc This module manages the slot mapping. In a Redis cluster, each key
+%% belongs to a slot and each slot belongs to a Redis master node.
+%%
+%% This module is mainly internal, but some functions are documented and may be
+%% useful for advanced scenarios.
+%%
+%% @see eredis_cluster
 -module(eredis_cluster_monitor).
 -behaviour(gen_server).
 
-%% API.
+%% Internal API.
 -export([start_link/0]).
 -export([connect/2, disconnect/1]).
 -export([refresh_mapping/1, async_refresh_mapping/1]).
@@ -9,7 +16,7 @@
 -export([get_pool_by_slot/1, get_pool_by_slot/2]).
 -export([get_all_pools/1]).
 
-%% API used for tests only.
+%% Public API.
 -export([get_all_pools/0]).
 -export([get_cluster_slots/0, get_cluster_nodes/0]).
 
@@ -34,22 +41,28 @@
 -define(SLOTS, eredis_cluster_monitor_slots).
 
 %% API.
+%% @private
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+%% @private
 connect(InitServers, Options) ->
     gen_server:call(?MODULE, {connect, InitServers, Options}).
 
+%% @private
 disconnect(PoolNodes) ->
     gen_server:call(?MODULE, {disconnect, PoolNodes}).
 
+%% @private
 refresh_mapping(Version) ->
     gen_server:call(?MODULE, {reload_slots_map, Version}).
 
+%% @private
 async_refresh_mapping(Version) ->
     gen_server:cast(?MODULE, {reload_slots_map, Version}).
 
+%% @private
 -spec get_state() -> #state{}.
 get_state() ->
     case ets:lookup(?MODULE, cluster_state) of
@@ -59,6 +72,7 @@ get_state() ->
             #state{}
     end.
 
+%% @private
 get_state_version(State) ->
     State#state.version.
 
@@ -66,6 +80,7 @@ get_state_version(State) ->
 get_all_pools() ->
     get_all_pools(get_state()).
 
+%% @private
 -spec get_all_pools(State :: #state{}) -> [atom()].
 get_all_pools(State) ->
     SlotsMapList = tuple_to_list(State#state.slots_maps),
@@ -73,8 +88,8 @@ get_all_pools(State) ->
                     SlotsMap#slots_map.node =/= undefined]).
 
 %% =============================================================================
-%% @doc Get cluster pool by slot. Optionally, a memoized State can be provided
-%% to prevent from querying ets inside loops.
+%% @private
+%% @doc Get cluster pool by slot.
 %% @end
 %% =============================================================================
 -spec get_pool_by_slot(Slot :: integer()) ->
@@ -83,6 +98,8 @@ get_pool_by_slot(Slot) ->
     State = get_state(),
     get_pool_by_slot(Slot, State).
 
+%% @private
+%% Supply a state to prevent an extra ets lookup
 -spec get_pool_by_slot(Slot :: integer(), State :: #state{}) ->
     {PoolName :: atom() | undefined, Version :: integer()}.
 get_pool_by_slot(Slot, State) ->
@@ -156,6 +173,7 @@ get_cluster_slots() ->
     Options = get_current_options(State),
     get_cluster_slots(State, Options).
 
+%% @private
 get_cluster_slots(State, Options) ->
     Query = ["CLUSTER", "SLOTS"],
     FailFn = fun get_cluster_slots_from_single_node/1,
@@ -164,7 +182,9 @@ get_cluster_slots(State, Options) ->
 %% =============================================================================
 %% @doc Get cluster nodes information.
 %% Returns a list of node elements, each in the form:
-%% [id, ip:port@cport, flags, master, ping-sent, pong-recv, config-epoch, link-state, <slot>, ...<slot>]
+%%
+%% <pre>[id, ip:port@cport, flags, master, ping-sent, pong-recv, config-epoch, link-state, Slot1, ..., SlotN]
+%% </pre>
 %%
 %% See: https://redis.io/commands/cluster-nodes#serialization-format
 %% @end
@@ -175,6 +195,7 @@ get_cluster_nodes() ->
     Options = get_current_options(State),
     get_cluster_nodes(State, Options).
 
+%% @private
 -spec get_cluster_nodes(State :: #state{}, Options :: options()) -> [[bitstring()]].
 get_cluster_nodes(State, Options) ->
     Query = ["CLUSTER", "NODES"],
@@ -187,6 +208,7 @@ get_cluster_nodes(State, Options) ->
                 end, [], NodesInfoList).
 
 %% =============================================================================
+%% @private
 %% @doc Fetch cluster information from an already connected node or from an init
 %%      node if no nodes are connected. Throws an exception if everything fails.
 %% @end
@@ -427,7 +449,7 @@ connect_(InitNodes, Options, State) ->
 
     reload_slots_map(NewState).
 
--spec disconnect_([PoolNodes :: term()], State :: #state{}) -> #state{}.
+-spec disconnect_(PoolNodes :: [atom()], State :: #state{}) -> #state{}.
 disconnect_([], State) ->
     State;
 disconnect_(PoolNodes, State) ->
@@ -447,12 +469,14 @@ disconnect_(PoolNodes, State) ->
 
 %% gen_server.
 
+%% @private
 init(_Args) ->
     ets:new(?MODULE, [protected, set, named_table, {read_concurrency, true}]),
     ets:new(?SLOTS, [protected, set, named_table, {read_concurrency, true}]),
     InitNodes = application:get_env(eredis_cluster, init_nodes, []),
     {ok, connect_(InitNodes, [], #state{})}. %% get_env options read later in callstack
 
+%% @private
 handle_call({reload_slots_map, Version}, _From, #state{version=Version} = State) ->
     {reply, ok, reload_slots_map(State)};
 handle_call({reload_slots_map, _}, _From, State) ->
@@ -465,6 +489,7 @@ handle_call({disconnect, PoolNodes}, _From, State) ->
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 
+%% @private
 handle_cast({reload_slots_map, Version}, #state{version = Version} = State) ->
     {noreply, reload_slots_map(State)};
 handle_cast({reload_slots_map, _OldVersion}, State) ->
@@ -473,11 +498,14 @@ handle_cast({reload_slots_map, _OldVersion}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+%% @private
 handle_info(_Info, State) ->
     {noreply, State}.
 
+%% @private
 terminate(_Reason, _State) ->
     ok.
 
+%% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
