@@ -1,13 +1,20 @@
 # eredis_cluster (Nordix fork)
 
-## Description
-
 eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
 
-Improvements compared to `adrienmo/eredis_cluster`:
+## Contents
+
+* [Improvements compared to adrienmo/eredis_cluster](#improvements-compared-to-adrienmoeredis_cluster)
+* [Usage](#usage)
+* [Compilation and tests](#compilation-and-tests)
+* [Configuration](#configuration)
+* [Troubleshooting](#troubleshooting)
+* [See also](#see-also)
+
+## Improvements compared to `adrienmo/eredis_cluster`
 
 * Support of TLS introduced in Redis 6
-* Uses [Nordix/eredis](https://github.com/Nordix/eredis) (socket error handling fixes)
+* Uses [Nordix/eredis](https://github.com/Nordix/eredis) (TLS, error handling fixes)
 * Many Dialyzer corrections
 * Elvis code formatting
 * Optimizations
@@ -15,7 +22,7 @@ Improvements compared to `adrienmo/eredis_cluster`:
     possible and don't refresh mapping when not needed, e.g. when a pool is busy
   * Don't use an extra wrapper process around each eredis connection process
 * Containerized testing
-* Testing using [similated eredis cluster](https://github.com/Nordix/fakeredis_cluster) for corner cases such as ASK redirects
+* Testing using [simulated Redis cluster](https://github.com/Nordix/fakeredis_cluster) for corner cases such as ASK redirects
 * Added API functions:
   - `connect/2`:              Connect to init nodes, with options
   - `qa2/1`:                  Query all nodes with re-attempts, returns
@@ -34,6 +41,78 @@ Improvements compared to `adrienmo/eredis_cluster`:
   - `qa/1`:                   Query all nodes, now with re-attempts
   - `eredis_cluster_monitor:get_all_pools/0`: Doesn't include duplicates.
 
+## Usage
+
+For the full reference manual, see the generated documentation in
+[doc/eredis_cluster.md](doc/eredis_cluster.md).
+
+```erlang
+%% Start the application and, if init nodes are defined in the application
+%% configuration, connect to the cluster (otherwise use connect/1,2)
+eredis_cluster:start().
+
+%% Simple command
+eredis_cluster:q(["GET","abc"]).
+
+%% Pipeline
+eredis_cluster:qp([["LPUSH", "a", "a"], ["LPUSH", "a", "b"], ["LPUSH", "a", "c"]]).
+
+%% Pipeline in multiple node (keys are sorted by node, a pipeline request is
+%% made on each node, then the result is aggregated and returned. The response
+%% keep the command order
+eredis_cluster:qmn([["GET", "a"], ["GET", "b"], ["GET", "c"]]).
+
+%% Transaction
+eredis_cluster:transaction([["LPUSH", "a", "a"], ["LPUSH", "a", "b"], ["LPUSH", "a", "c"]]).
+
+%% Transaction Function
+Function = fun(Worker) ->
+    eredis_cluster:qw(Worker, ["WATCH", "abc"]),
+    {ok, Var} = eredis_cluster:qw(Worker, ["GET", "abc"]),
+
+    %% Do something with Var %%
+    Var2 = binary_to_integer(Var) + 1,
+
+    {ok, Result} = eredis_cluster:qw(Worker,[["MULTI"], ["SET", "abc", Var2], ["EXEC"]]),
+    lists:last(Result)
+end,
+eredis_cluster:transaction(Function, "abc").
+
+%% Optimistic Locking Transaction
+Function = fun(GetResult) ->
+    {ok, Var} = GetResult,
+    Var2 = binary_to_integer(Var) + 1,
+    {[["SET", Key, Var2]], Var2}
+end,
+Result = optimistic_locking_transaction(Key, ["GET", Key], Function),
+{ok, {TransactionResult, CustomVar}} = Result.
+
+%% Atomic Key update
+Fun = fun(Var) -> binary_to_integer(Var) + 1 end,
+eredis_cluster:update_key("abc", Fun).
+
+%% Atomic Field update
+Fun = fun(Var) -> binary_to_integer(Var) + 1 end,
+eredis_cluster:update_hash_field("abc", "efg", Fun).
+
+%% Load LUA script on all nodes
+Script = "return redis.call('set', KEYS[1], ARGV[1]);",
+{ok, ScriptHash} = eredis_cluster:load_script(Script),
+
+%% Execute pre-loaded script based on hash (EVALSHA) on the node where
+%% the key "abs" is, with a fallback to load it if needed.
+eredis_cluster:eval(Script, ScriptHash, ["abc"], ["123"]).
+
+%% Flush DB
+eredis_cluster:flushdb().
+
+%% Query on all cluster server
+eredis_cluster:qa(["FLUSHDB"]).
+
+%% Execute a query on the server containing the key "TEST"
+eredis_cluster:qk(["FLUSHDB"], "TEST").
+```
+
 ## Compilation and tests
 
 The directory contains a Makefile that uses rebar3.
@@ -41,16 +120,16 @@ The directory contains a Makefile that uses rebar3.
 Setup a Redis cluster and start the tests using following commands:
 
 ```bash
-make
-make start  # Start a local Redis cluster
+make        # ... or rebar3 compile
+make start  # Start a local Redis cluster using Docker
 make test   # Run tests towards the cluster
 make stop   # Teardown the Redis cluster
 ```
 
 ## Configuration
 
-To configure the Redis cluster, you can use an application variable (probably in
-your app.config):
+To configure the Redis cluster client, you can use an application variable
+(probably in your app.config):
 
     {eredis_cluster,
         [
@@ -70,7 +149,7 @@ your app.config):
 You don't need to specify all nodes of your configuration as eredis_cluster will
 retrieve them through the command `CLUSTER SLOTS` at runtime.
 
-### Configuration description
+### Configuration parameters
 
 * `init_nodes`: List of Redis instances to fetch cluster information from. Default: `[]`
 * `pool_size`: Number of connected clients to each Redis instance. Default: `10`
@@ -111,74 +190,6 @@ eredis_cluster:connect([{"127.0.0.1", 30001},
                         {"127.0.0.1", 30002}], Options).
 ```
 
-## Usage
-
-```erlang
-%% Start the application and, if init nodes are defined in the application
-%% configuration, connect to the cluster
-eredis_cluster:start().
-
-%% Simple command
-eredis_cluster:q(["GET","abc"]).
-
-%% Pipeline
-eredis_cluster:qp([["LPUSH", "a", "a"], ["LPUSH", "a", "b"], ["LPUSH", "a", "c"]]).
-
-%% Pipeline in multiple node (keys are sorted by node, a pipeline request is
-%% made on each node, then the result is aggregated and returned. The response
-%% keep the command order
-eredis_cluster:qmn([["GET", "a"], ["GET", "b"], ["GET", "c"]]).
-
-%% Transaction
-eredis_cluster:transaction([["LPUSH", "a", "a"], ["LPUSH", "a", "b"], ["LPUSH", "a", "c"]]).
-
-%% Transaction Function
-Function = fun(Worker) ->
-    eredis_cluster:qw(Worker, ["WATCH", "abc"]),
-    {ok, Var} = eredis_cluster:qw(Worker, ["GET", "abc"]),
-
-    %% Do something with Var %%
-    Var2 = binary_to_integer(Var) + 1,
-
-    {ok, Result} = eredis_cluster:qw(Worker,[["MULTI"], ["SET", "abc", Var2], ["EXEC"]]),
-    lists:last(Result)
-end,
-eredis_cluster:transaction(Function, "abc").
-
-%% Optimistic Locking Transaction
-Function = fun(GetResult) ->
-    {ok, Var} = GetResult,
-    Var2 = binary_to_integer(Var) + 1,
-    {[["SET", Key, Var2]], Var2}
-end,
-Result = optimistic_locking_transaction(Key, ["GET", Key], Function),
-{ok, {TransactionResult, CustomVar}} = Result
-
-%% Atomic Key update
-Fun = fun(Var) -> binary_to_integer(Var) + 1 end,
-eredis_cluster:update_key("abc", Fun).
-
-%% Atomic Field update
-Fun = fun(Var) -> binary_to_integer(Var) + 1 end,
-eredis_cluster:update_hash_field("abc", "efg", Fun).
-
-%% Eval script, both script and hash are necessary to execute the command,
-%% the script hash should be precomputed at compile time otherwise, it will
-%% execute it at each request. Could be solved by using a macro though.
-Script = "return redis.call('set', KEYS[1], ARGV[1]);",
-ScriptHash = "4bf5e0d8612687699341ea7db19218e83f77b7cf",
-eredis_cluster:eval(Script, ScriptHash, ["abc"], ["123"]).
-
-%% Flush DB
-eredis_cluster:flushdb().
-
-%% Query on all cluster server
-eredis_cluster:qa(["FLUSHDB"]).
-
-%% Execute a query on the server containing the key "TEST"
-eredis_cluster:qk(["FLUSHDB"], "TEST").
-```
-
 ## Troubleshooting
 
 The following Redis-log indicates that Redis accepts TLS, but the client is not configured for TLS.
@@ -192,3 +203,6 @@ Debug logging for TLS connections can be enabled in eredis_cluster by the connec
 ## See also
 
 * Generated documentation: [doc/eredis_cluster.md](doc/eredis_cluster.md)
+* Dependencies:
+  * [Poolboy](https://github.com/devinus/poolboy)
+  * [Eredis](https://github.com/Nordix/eredis)
