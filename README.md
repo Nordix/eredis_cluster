@@ -27,10 +27,12 @@ eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
   - `connect/2`:              Connect to init nodes, with options
   - `qa2/1`:                  Query all nodes with re-attempts, returns
                               `[{Node, Result}, ...]`
-  - `q_noreply/1`:            Query a single Redis instance but wont wait for its result
-  - `load_script/1`:          Pre-load script to all Redis instances
-  - `scan/4`:                 Perform a scan command on given Redis instance
-  - `disconnect/1`:           Disconnect from given Redis instances
+  - `qn/2`:                   Query to specific Redis node
+  - `q_noreply/1`:            Query a single Redis node but wont wait for its result
+  - `load_script/1`:          Pre-load script to all Redis nodes
+  - `scan/4`:                 Perform a scan command on given Redis nodes
+  - `disconnect/1`:           Disconnect from given Redis node
+  - `get_all_pools/0`:        Get all pools (one for each Redis node in cluster)
   - `get_pool_by_command/1`:  Get which Redis pool that handles a given command
   - `get_pool_by_key/1`:      Get which Redis pool that handles a given key
   - `eredis_cluster_monitor:get_cluster_nodes/0`: Get cluster nodes information
@@ -39,7 +41,8 @@ eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
     (CLUSTER SLOTS)
 * Changed behaviour:
   - `qa/1`:                   Query all nodes, now with re-attempts
-  - `eredis_cluster_monitor:get_all_pools/0`: Doesn't include duplicates.
+  - `transaction/2`:          The second argument can be a Redis node (pool) or
+                              a key, instead of only a key
 
 ## Usage
 
@@ -151,8 +154,8 @@ retrieve them through the command `CLUSTER SLOTS` at runtime.
 
 ### Configuration parameters
 
-* `init_nodes`: List of Redis instances to fetch cluster information from. Default: `[]`
-* `pool_size`: Number of connected clients to each Redis instance. Default: `10`
+* `init_nodes`: List of Redis nodes to fetch cluster information from. Default: `[]`
+* `pool_size`: Number of connected clients to each Redis node. Default: `10`
 * `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
 * `password`: Password to use for a Redis cluster configured with `requirepass`. Default: `""` (i.e. AUTH not sent)
 * `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`

@@ -1,6 +1,6 @@
 -type anystring() :: string() | bitstring().
 
--type redis_simple_command() :: [anystring()].
+-type redis_simple_command() :: [anystring() | integer()].
 -type redis_pipeline_command() :: [redis_simple_command()].
 -type redis_command() :: redis_simple_command() | redis_pipeline_command().
 

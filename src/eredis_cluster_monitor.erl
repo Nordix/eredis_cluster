@@ -76,6 +76,7 @@ get_state() ->
 get_state_version(State) ->
     State#state.version.
 
+%% @private
 -spec get_all_pools() -> [atom()].
 get_all_pools() ->
     get_all_pools(get_state()).

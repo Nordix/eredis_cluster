@@ -19,7 +19,7 @@
 -export([connect/1, connect/2, disconnect/1]).
 
 %% Generic redis call
--export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qa2/1, qw/2, qmn/1]).
+-export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qa2/1, qn/2, qw/2, qmn/1]).
 -export([transaction/1, transaction/2]).
 
 %% Specific redis command implementation
@@ -30,7 +30,9 @@
 -export([update_key/2]).
 -export([update_hash_field/3]).
 -export([optimistic_locking_transaction/3]).
--export([get_pool_by_command/1, get_pool_by_key/1]).
+
+%% Specific pools (specific Redis nodes)
+-export([get_pool_by_command/1, get_pool_by_key/1, get_all_pools/0]).
 
 -ifdef(TEST).
 -export([get_key_slot/1]).
@@ -231,6 +233,21 @@ qa2(Command, Counter, Res) ->
     end.
 
 %% =============================================================================
+%% @doc
+%% Execute a simple or pipelined command on a specific node.
+%%
+%% The node is identified by the name of the connection pool for the node.
+%% @see get_all_pools/0
+%% @see qk/2
+%% @end
+%% =============================================================================
+-spec qn(Command, Node) -> redis_result()
+              when Command :: redis_command(),
+                   Node    :: atom().
+qn(Command, Node) when is_atom(Node) ->
+    transaction(fun(Connection) -> qw(Connection, Command) end, Node).
+
+%% =============================================================================
 %% @doc Function to be used for direct calls to an `eredis' connection instance
 %% (a worker) in the function passed to the `transaction/2' function.
 %%
@@ -323,17 +340,21 @@ qmn2([], [], Acc, _) ->
 %% @see qw/2
 %% @end
 %% =============================================================================
--spec transaction(Transaction :: fun((Connection :: pid()) -> redis_result()),
-                  Key :: anystring()) -> any().
-transaction(Transaction, Key) ->
+-spec transaction(Transaction, Key | Pool) -> redis_result()
+              when Key :: anystring(),
+                   Pool :: atom(),
+                   Transaction :: fun((Connection :: pid()) -> redis_result()).
+transaction(Transaction, Key) when is_list(Key); is_binary(Key) ->
     Slot = get_key_slot(Key),
-    transaction(Transaction, Slot, undefined, 0).
-
-%% FIXME: There's no base case for the counter, so it may loop forever.
-transaction(Transaction, Slot, undefined, _) ->
     transaction_retry_loop(Transaction, Slot, 0);
+transaction(Transaction, Pool) when is_atom(Pool) ->
+    transaction_retry_loop(Transaction, Pool, 0).
+
+%% Helper for optimistic_locking_transaction.
 transaction(Transaction, Slot, ExpectedValue, Counter) ->
     case transaction_retry_loop(Transaction, Slot, 0) of
+        Result when Counter =< 0 ->
+            Result;
         ExpectedValue ->
             transaction(Transaction, Slot, ExpectedValue, Counter - 1);
         {ExpectedValue, _} ->
@@ -343,18 +364,28 @@ transaction(Transaction, Slot, ExpectedValue, Counter) ->
     end.
 
 %% Helper for transaction/2,4 with retries and backoff like query/3.
--spec transaction_retry_loop(Transaction  :: fun((Worker :: pid() | atom()) -> redis_result()),
-                             Slot         :: 0..16383,
-                             RetryCounter :: 0..?REDIS_CLUSTER_REQUEST_TTL) ->
-          redis_result().
+-spec transaction_retry_loop(Transaction, Slot | Pool, RetryCounter) ->
+          redis_result()
+              when Transaction  :: fun((Connection :: pid()) -> redis_result()),
+                   Slot         :: 0..16383,
+                   Pool         :: atom(),
+                   RetryCounter :: 0..?REDIS_CLUSTER_REQUEST_TTL.
 transaction_retry_loop(_, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
     {error, no_connection};
-transaction_retry_loop(Transaction, Slot, Counter) ->
+transaction_retry_loop(Transaction, SlotOrPool, Counter) ->
     throttle_retries(Counter),
-    {Pool, Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
+    {Pool, Version} =
+        case SlotOrPool of
+            Slot when is_integer(Slot) ->
+                eredis_cluster_monitor:get_pool_by_slot(Slot);
+            Pool0 when is_atom(Pool0) ->
+                State = eredis_cluster_monitor:get_state(),
+                Version0 = eredis_cluster_monitor:get_state_version(State),
+                {Pool0, Version0}
+        end,
     Result = eredis_cluster_pool:transaction(Pool, Transaction),
     case handle_transaction_result(Result, Version) of
-        retry -> transaction_retry_loop(Transaction, Slot, Counter + 1);
+        retry -> transaction_retry_loop(Transaction, SlotOrPool, Counter + 1);
         Result -> Result
     end.
 
@@ -407,52 +438,23 @@ load_script(Script) ->
 %% =============================================================================
 %% @doc Performs a SCAN on a specific node in the Redis cluster.
 %%
-%% This is conceptually equivalent to calling `qw(Connection, ["SCAN", Cursor,
-%% "MATCH", Pattern, "COUNT", Count])' on a connection to the specified node.
+%% This is equivalent to calling `qn(["SCAN", Cursor, "MATCH", Pattern, "COUNT",
+%% Count], Node)'.
 %%
-%% To scan all nodes in the cluser, use `eredis_cluster_monitor:get_all_pools/0'
-%% to retrieve the nodes.
-%%
-%% To retrieve a node where a particular key is stored, use `get_pool_by_key/1'.
-%%
-%% @see eredis_cluster_monitor:get_all_pools/0
-%% @see get_pool_by_key/1
+%% @see get_all_pools/0
+%% @see qn/1
 %% @end
-%%
-%% TODO: Add funcions to be able to execute arbitrary commands on a specific
-%% node, with retries. Then, implement scan/4 using that function. Currently the
-%% undocumented eredis_cluster_pool:transaction/2 does this but without retries.
-%%
-%% Idea: Allow transaction/2 to take a pool (atom) instead of a key:
-%% transaction(Fun, KeyOrPool).
-%%
-%% Suggested functions to add to the API: qn(Node, Command)
 %% =============================================================================
 -spec scan(Node, Cursor, Pattern, Count) -> Result
               when Node :: atom(),
                    Cursor :: integer(),
-                   Pattern :: string(),
+                   Pattern :: anystring(),
                    Count :: integer(),
                    Result :: redis_result() |
                              {error, Reason :: binary() | atom()}.
-scan(Node, Cursor, Pattern, Count) when is_list(Pattern) ->
-    scan(Node, Cursor, Pattern, Count, 0).
-
-scan(_, _, _, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
-    {error, no_connection};
-scan(PoolName, Cursor, Pattern, Count, RetryCounter) ->
-    throttle_retries(RetryCounter),
-
+scan(Node, Cursor, Pattern, Count) when is_atom(Node) ->
     Command = ["scan", Cursor, "match", Pattern, "count", Count],
-    Transaction = fun(Worker) -> qw(Worker, Command) end,
-    Result = eredis_cluster_pool:transaction(PoolName, Transaction),
-
-    State = eredis_cluster_monitor:get_state(),
-    Version = eredis_cluster_monitor:get_state_version(State),
-    case handle_transaction_result(Result, Version) of
-        retry -> scan(PoolName, Cursor, Pattern, Count, RetryCounter + 1);
-        Result -> Result
-    end.
+    qn(Command, Node).
 
 %% =============================================================================
 
@@ -902,6 +904,19 @@ get_pool_by_key(Key) ->
     Slot = get_key_slot(Key),
     {Pool, _Version} = eredis_cluster_monitor:get_pool_by_slot(Slot),
     Pool.
+
+%% =============================================================================
+%% @doc Returns the connection pools for all Redis nodes.
+%%
+%% This is usedful for commands to a specific node using `qn/2' and
+%% `transaction/2'.
+%% @see qn/2
+%% @see transaction/2
+%% @end
+%% =============================================================================
+-spec get_all_pools() -> [atom()].
+get_all_pools() ->
+    eredis_cluster_monitor:get_all_pools().
 
 %% =============================================================================
 %% @doc Return the hash slot from the key
