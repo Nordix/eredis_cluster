@@ -1,5 +1,5 @@
 .PHONY: all compile clean test ut ct xref dialyzer elvis cover coverview edoc help
-.PHONY: start start-tcp start-tls status status-tcp status-tls stop travis-run
+.PHONY: start start-tcp start-tls status status-tcp status-tls stop
 
 REBAR ?= rebar3
 REDIS_VER ?= 6.0.4
@@ -50,14 +50,6 @@ coverview: cover
 edoc:
 	@$(REBAR) edoc
 
-help:
-	@echo "Please use 'make <target>' where <target> is one of"
-	@echo "  start             starts a test redis cluster"
-	@echo "  stop              stops all redis servers"
-	@echo "  travis-run        starts the redis cluster and runs your tests"
-	@echo "  travis-install    install redis from 'unstable' branch"
-	@echo "  edoc, elvis, cover and more..."
-
 start: start-tcp start-tls
 
 start-tcp:
@@ -68,7 +60,7 @@ start-tcp:
 	docker run --name redis-5 -d $(DOCKER_CONF) redis:$(REDIS_VER) redis-server $(REDIS_CONF) --port 30005
 	docker run --name redis-6 -d $(DOCKER_CONF) redis:$(REDIS_VER) redis-server $(REDIS_CONF) --port 30006
 	sleep 5
-	echo 'yes' | docker run --name redis-cluster -i --rm $(DOCKER_CONF) redis:$(REDIS_VER) \
+	echo 'yes' | docker run --name redis-cli -i --rm $(DOCKER_CONF) redis:$(REDIS_VER) \
 	redis-cli --cluster create \
 	127.0.0.1:30001 127.0.0.1:30002 127.0.0.1:30003 127.0.0.1:30004 127.0.0.1:30005 127.0.0.1:30006 \
 	--cluster-replicas 1
@@ -81,7 +73,7 @@ start-tls:
 	docker run --name redis-tls-5 -d $(DOCKER_CONF) redis:$(REDIS_VER) redis-server $(REDIS_TLS_CONF) --tls-port 31005
 	docker run --name redis-tls-6 -d $(DOCKER_CONF) redis:$(REDIS_VER) redis-server $(REDIS_TLS_CONF) --tls-port 31006
 	sleep 7
-	echo 'yes' | docker run --name redis-cluster -i --rm $(DOCKER_CONF) redis:$(REDIS_VER) \
+	echo 'yes' | docker run --name redis-cli-tls -i --rm $(DOCKER_CONF) redis:$(REDIS_VER) \
 	redis-cli --cluster create \
 	--tls --cacert /conf/tls/ca.crt --cert /conf/tls/redis.crt --key /conf/tls/redis.key \
 	127.0.0.1:31001 127.0.0.1:31002 127.0.0.1:31003 127.0.0.1:31004 127.0.0.1:31005 127.0.0.1:31006 \
@@ -102,12 +94,3 @@ status-tls:
 stop:
 	-docker rm -f redis-1 redis-2 redis-3 redis-4 redis-5 redis-6
 	-docker rm -f redis-tls-1 redis-tls-2 redis-tls-3 redis-tls-4 redis-tls-5 redis-tls-6
-
-travis-run:
-	make start # Start and join clusters
-	sleep 5
-	make status
-
-	make clean dialyzer compile test
-
-	make stop # Stop all cluster nodes
