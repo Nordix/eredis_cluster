@@ -25,21 +25,12 @@ useful for advanced scenarios.
 ## Function Index ##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#get_all_pools-0">get_all_pools/0</a></td><td></td></tr><tr><td valign="top"><a href="#get_cluster_nodes-0">get_cluster_nodes/0</a></td><td>Get cluster nodes information.</td></tr><tr><td valign="top"><a href="#get_cluster_slots-0">get_cluster_slots/0</a></td><td>Get cluster slots information.</td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#get_cluster_nodes-0">get_cluster_nodes/0</a></td><td>Get cluster nodes information.</td></tr><tr><td valign="top"><a href="#get_cluster_slots-0">get_cluster_slots/0</a></td><td>Get cluster slots information.</td></tr></table>
 
 
 <a name="functions"></a>
 
 ## Function Details ##
-
-<a name="get_all_pools-0"></a>
-
-### get_all_pools/0 ###
-
-<pre><code>
-get_all_pools() -&gt; [atom()]
-</code></pre>
-<br />
 
 <a name="get_cluster_nodes-0"></a>
 

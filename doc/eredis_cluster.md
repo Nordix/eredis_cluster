@@ -122,7 +122,7 @@ redis_result() = <a href="#type-redis_simple_result">redis_simple_result()</a> |
 
 
 <pre><code>
-redis_simple_command() = [<a href="#type-anystring">anystring()</a>]
+redis_simple_command() = [<a href="#type-anystring">anystring()</a> | integer()]
 </code></pre>
 
 
@@ -161,13 +161,14 @@ redis_transaction_result() = {ok, [<a href="#type-redis_success_result">redis_su
 
 
 <table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#connect-1">connect/1</a></td><td>Connect to a Redis cluster using a set of init nodes.</td></tr><tr><td valign="top"><a href="#connect-2">connect/2</a></td><td>Connects to a Redis cluster using a set of init nodes, with options.</td></tr><tr><td valign="top"><a href="#disconnect-1">disconnect/1</a></td><td>Disconnects a set of nodes.</td></tr><tr><td valign="top"><a href="#eval-4">eval/4</a></td><td>Eval command helper, to optimize the query, it will try to execute the
-script using its hashed value.</td></tr><tr><td valign="top"><a href="#flushdb-0">flushdb/0</a></td><td>Perform flushdb command on each node of the redis cluster.</td></tr><tr><td valign="top"><a href="#get_pool_by_command-1">get_pool_by_command/1</a></td><td>Returns the connection pool for the Redis node where a command should be
+script using its hashed value.</td></tr><tr><td valign="top"><a href="#flushdb-0">flushdb/0</a></td><td>Perform flushdb command on each node of the redis cluster.</td></tr><tr><td valign="top"><a href="#get_all_pools-0">get_all_pools/0</a></td><td>Returns the connection pools for all Redis nodes.</td></tr><tr><td valign="top"><a href="#get_pool_by_command-1">get_pool_by_command/1</a></td><td>Returns the connection pool for the Redis node where a command should be
 executed.</td></tr><tr><td valign="top"><a href="#get_pool_by_key-1">get_pool_by_key/1</a></td><td>Returns the connection pool for the Redis node responsible for the key.</td></tr><tr><td valign="top"><a href="#load_script-1">load_script/1</a></td><td>Load LUA script to all master nodes in the Redis cluster.</td></tr><tr><td valign="top"><a href="#optimistic_locking_transaction-3">optimistic_locking_transaction/3</a></td><td>Optimistic locking transaction, based on Redis documentation:
 https://redis.io/topics/transactions.</td></tr><tr><td valign="top"><a href="#q-1">q/1</a></td><td>This function executes simple or pipelined command on a single redis
 node, which is selected according to the first key in the command.</td></tr><tr><td valign="top"><a href="#q_noreply-1">q_noreply/1</a></td><td>Executes a simple or pipeline of commands on a single Redis node, but
 ignoring any response from Redis.</td></tr><tr><td valign="top"><a href="#qa-1">qa/1</a></td><td>Performs a query on all nodes in the cluster.</td></tr><tr><td valign="top"><a href="#qa2-1">qa2/1</a></td><td>Perform a given query on all master nodes of a redis cluster and
 return result with master node reference in result.</td></tr><tr><td valign="top"><a href="#qk-2">qk/2</a></td><td>Executes a simple or pipeline of command on the Redis node where the
-provided key resides.</td></tr><tr><td valign="top"><a href="#qmn-1">qmn/1</a></td><td>Multi node query.</td></tr><tr><td valign="top"><a href="#qp-1">qp/1</a></td><td>Executes a pipeline of commands.</td></tr><tr><td valign="top"><a href="#qw-2">qw/2</a></td><td>Function to be used for direct calls to an <code>eredis</code> connection instance
+provided key resides.</td></tr><tr><td valign="top"><a href="#qmn-1">qmn/1</a></td><td>Multi node query.</td></tr><tr><td valign="top"><a href="#qn-2">qn/2</a></td><td>
+Execute a simple or pipelined command on a specific node.</td></tr><tr><td valign="top"><a href="#qp-1">qp/1</a></td><td>Executes a pipeline of commands.</td></tr><tr><td valign="top"><a href="#qw-2">qw/2</a></td><td>Function to be used for direct calls to an <code>eredis</code> connection instance
 (a worker) in the function passed to the <code>transaction/2</code> function.</td></tr><tr><td valign="top"><a href="#scan-4">scan/4</a></td><td>Performs a SCAN on a specific node in the Redis cluster.</td></tr><tr><td valign="top"><a href="#start-0">start/0</a></td><td>Start application.</td></tr><tr><td valign="top"><a href="#stop-0">stop/0</a></td><td>Stop application.</td></tr><tr><td valign="top"><a href="#transaction-1">transaction/1</a></td><td>Function to execute a pipeline of commands as a transaction command, by
 wrapping it in MULTI and EXEC.</td></tr><tr><td valign="top"><a href="#transaction-2">transaction/2</a></td><td>Execute a function on a single connection.</td></tr><tr><td valign="top"><a href="#update_hash_field-3">update_hash_field/3</a></td><td>Update the value of a field stored in a hash by applying the function
 passed in the argument.</td></tr><tr><td valign="top"><a href="#update_key-2">update_key/2</a></td><td>Update the value of a key by applying the function passed in the
@@ -257,6 +258,22 @@ flushdb() -&gt; ok | {error, Reason::bitstring()}
 Perform flushdb command on each node of the redis cluster
 
 This is equivalent to calling `qa(["FLUSHDB"])` except for the return value.
+
+<a name="get_all_pools-0"></a>
+
+### get_all_pools/0 ###
+
+<pre><code>
+get_all_pools() -&gt; [atom()]
+</code></pre>
+<br />
+
+Returns the connection pools for all Redis nodes.
+
+This is usedful for commands to a specific node using `qn/2` and
+`transaction/2`.
+
+__See also:__ [qn/2](#qn-2), [transaction/2](#transaction-2).
 
 <a name="get_pool_by_command-1"></a>
 
@@ -410,6 +427,22 @@ Multi node query. Each command in a list of commands is sent
 to the Redis node responsible for the key affected by that
 command. Only simple commands operating on a single key are supported.
 
+<a name="qn-2"></a>
+
+### qn/2 ###
+
+<pre><code>
+qn(Command, Node) -&gt; <a href="#type-redis_result">redis_result()</a>
+</code></pre>
+
+<ul class="definitions"><li><code>Command = <a href="#type-redis_command">redis_command()</a></code></li><li><code>Node = atom()</code></li></ul>
+
+Execute a simple or pipelined command on a specific node.
+
+The node is identified by the name of the connection pool for the node.
+
+__See also:__ [get_all_pools/0](#get_all_pools-0), [qk/2](#qk-2).
+
 <a name="qp-1"></a>
 
 ### qp/1 ###
@@ -450,19 +483,14 @@ __See also:__ [transaction/2](#transaction-2).
 scan(Node, Cursor, Pattern, Count) -&gt; Result
 </code></pre>
 
-<ul class="definitions"><li><code>Node = atom()</code></li><li><code>Cursor = integer()</code></li><li><code>Pattern = string()</code></li><li><code>Count = integer()</code></li><li><code>Result = <a href="#type-redis_result">redis_result()</a> | {error, Reason::binary() | atom()}</code></li></ul>
+<ul class="definitions"><li><code>Node = atom()</code></li><li><code>Cursor = integer()</code></li><li><code>Pattern = <a href="#type-anystring">anystring()</a></code></li><li><code>Count = integer()</code></li><li><code>Result = <a href="#type-redis_result">redis_result()</a> | {error, Reason::binary() | atom()}</code></li></ul>
 
 Performs a SCAN on a specific node in the Redis cluster.
 
-This is conceptually equivalent to calling `qw(Connection, ["SCAN", Cursor,
-"MATCH", Pattern, "COUNT", Count])` on a connection to the specified node.
+This is equivalent to calling `qn(["SCAN", Cursor, "MATCH", Pattern, "COUNT",
+Count], Node)`.
 
-To scan all nodes in the cluser, use `eredis_cluster_monitor:get_all_pools/0`
-to retrieve the nodes.
-
-To retrieve a node where a particular key is stored, use `get_pool_by_key/1`.
-
-__See also:__ [get_pool_by_key/1](#get_pool_by_key-1), [eredis_cluster_monitor:get_all_pools/0](eredis_cluster_monitor.md#get_all_pools-0).
+__See also:__ [get_all_pools/0](#get_all_pools-0), [qn/1](#qn-1).
 
 <a name="start-0"></a>
 
@@ -517,9 +545,10 @@ of responses for each of the commands.
 ### transaction/2 ###
 
 <pre><code>
-transaction(Transaction::fun((Connection::pid()) -&gt; <a href="#type-redis_result">redis_result()</a>), Key::<a href="#type-anystring">anystring()</a>) -&gt; any()
+transaction(Transaction, Key::Key | Pool) -&gt; <a href="#type-redis_result">redis_result()</a>
 </code></pre>
-<br />
+
+<ul class="definitions"><li><code>Key = <a href="#type-anystring">anystring()</a></code></li><li><code>Pool = atom()</code></li><li><code>Transaction = fun((Connection::pid()) -&gt; <a href="#type-redis_result">redis_result()</a>)</code></li></ul>
 
 Execute a function on a single connection. This should be used when a
 transaction command such as WATCH or DISCARD must be used. The node is
