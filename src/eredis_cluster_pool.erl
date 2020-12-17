@@ -21,9 +21,12 @@ create(Host, Port, Options) ->
 
     case whereis(PoolName) of
         undefined ->
-            WorkerArgs = [{host, Host}, {port, Port}] ++ Options,
-            Size = application:get_env(eredis_cluster, pool_size, 10),
-            MaxOverflow = application:get_env(eredis_cluster, pool_max_overflow, 0),
+            EredisOptions = [{K, V} || {K, V} <- Options,
+                                       K =/= pool_size,
+                                       K =/= pool_max_overflow],
+            WorkerArgs = [{host, Host}, {port, Port}] ++ EredisOptions,
+            Size = proplists:get_value(pool_size, Options, 10),
+            MaxOverflow = proplists:get_value(pool_max_overflow, Options, 0),
 
             PoolArgs = [{name, {local, PoolName}},
                         {worker_module, eredis},

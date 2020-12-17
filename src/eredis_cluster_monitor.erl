@@ -359,19 +359,8 @@ parse_cluster_slots([], _Index, Acc) ->
 %% =============================================================================
 -spec get_current_options(State::#state{}) -> options().
 get_current_options(State) ->
-    PasswordEntry = case application:get_env(eredis_cluster, password) of
-                        {ok, Password} -> [{password, Password}];
-                        _ -> []
-                    end,
-    TlsEntry = case application:get_env(eredis_cluster, tls) of
-                   {ok, TlsConf} -> [{tls, TlsConf}];
-                   _ -> []
-               end,
-    SockOptsEntry = case application:get_env(eredis_cluster, socket_options) of
-                        {ok, SockOptsConf} -> [{socket_options, SockOptsConf}];
-                        _ -> []
-                    end,
-    lists:usort(State#state.node_options ++ PasswordEntry ++ TlsEntry ++ SockOptsEntry).
+    Env = application:get_all_env(eredis_cluster),
+    lists:ukeysort(1, State#state.node_options ++ Env).
 
 %%%------------------------------------------------------------
 -spec close_connection_with_nodes(SlotsMaps::[#slots_map{}],
