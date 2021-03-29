@@ -400,6 +400,12 @@ test_command_support() ->
          ["xinfo", "consumers", "k", "somegroup"],
          ["xgroup", "create", "k", "somegroup", "$"],
          ["XGROUP", "CREATECONSUMER", "k", "somegroup", "myconsumer123"],
+         ["memory", "usage", "k"],
+         ["object", "encoding", "k"],
+         %% New in Redis 6.2 (not yet used in builds):
+         %%["zunion", "2", "k", "k2"], % Added in Redis 6.2
+         %%["zinter", "2", "k", "k2"], % Added in Redis 6.2
+         %%["zdiff", "2", "k", "k2"], % Added in Redis 6.2
 
          %% Key is 4th
          ["eval", "return redis.call('set',KEYS[1],'bar')", "1", "k"],
@@ -415,8 +421,12 @@ test_command_support() ->
 test_command_support(Command) ->
     Key = eredis_cluster:get_key_from_command(Command),
     CommandGetKeys = ["command", "getkeys" | Command],
-    {ok, [ExpectedKey | _]} = eredis_cluster:qk(CommandGetKeys, "dummy-key"),
-    ?assertEqual(binary_to_list(ExpectedKey), Key).
+    case eredis_cluster:qk(CommandGetKeys, "dummy-key") of
+        {ok, [ExpectedKey | _]} ->
+            ?assertEqual(binary_to_list(ExpectedKey), Key);
+        {error, Error} ->
+            ?assertEqual(dummy, {Command, Error})
+    end.
 
 -spec get_master_nodes() -> [{NodeId::string(), PoolName::atom()}].
 get_master_nodes() ->

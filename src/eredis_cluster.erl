@@ -972,32 +972,27 @@ get_key_from_command([[X|Y]|Z]) when is_list(X) ->
         _ ->
             get_key_from_command([X|Y])
     end;
-get_key_from_command([Term1, Term2|Rest]) when is_bitstring(Term1) ->
-    get_key_from_command([bitstring_to_list(Term1), Term2|Rest]);
-get_key_from_command([Term1, Term2|Rest]) ->
-    case string:to_lower(Term1) of
-        "info" ->
-            undefined;
-        "config" ->
-            undefined;
-        "shutdown" ->
-            undefined;
-        "slaveof" ->
-            undefined;
-        "eval" ->
-            nth_arg(2, Rest);
-        "evalsha" ->
-            nth_arg(2, Rest);
-        "xinfo" ->
-            nth_arg(1, Rest);
-        "xgroup" ->
-            nth_arg(1, Rest);
-        "xread" ->
-            arg_after_keyword("streams", [Term2|Rest]);
-        "xreadgroup" ->
-            arg_after_keyword("streams", [Term2|Rest]);
-        _ ->
-            maybe_binary_to_list(Term2)
+get_key_from_command([Name | Args]) when is_bitstring(Name) ->
+    get_key_from_command([bitstring_to_list(Name) | Args]);
+get_key_from_command([Name | [Arg|_Rest]=Args]) ->
+    case string:to_lower(Name) of
+        "info"       -> undefined;
+        "config"     -> undefined;
+        "shutdown"   -> undefined;
+        "slaveof"    -> undefined;
+        "bitop"      -> nth_arg(2, Args);
+        "memory"     -> memory_arg(Args);
+        "object"     -> nth_arg(2, Args);
+        "xgroup"     -> nth_arg(2, Args);
+        "xinfo"      -> nth_arg(2, Args);
+        "zdiff"      -> nth_arg(2, Args);
+        "zinter"     -> nth_arg(2, Args);
+        "zunion"     -> nth_arg(2, Args);
+        "eval"       -> nth_arg(3, Args);
+        "evalsha"    -> nth_arg(3, Args);
+        "xread"      -> arg_after_keyword("streams", Args);
+        "xreadgroup" -> arg_after_keyword("streams", Args);
+        _Default     -> maybe_binary_to_list(Arg)
     end;
 get_key_from_command(_) ->
     undefined.
@@ -1027,6 +1022,14 @@ arg_after_keyword(Keyword, [Arg|Args]) ->
             maybe_binary_to_list(hd(Args));
         _Mismatch ->
             arg_after_keyword(Keyword, Args)
+    end.
+
+memory_arg([Subcommand | Args]) when is_binary(Subcommand) ->
+    memory_arg([binary_to_list(Subcommand) | Args]);
+memory_arg([Subcommand | Args]) ->
+    case string:to_lower(Subcommand) of
+        "usage" -> nth_arg(1, Args);
+        _Other  -> undefined
     end.
 
 -ifdef(TEST).
