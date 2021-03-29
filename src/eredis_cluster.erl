@@ -36,6 +36,7 @@
 
 -ifdef(TEST).
 -export([get_key_slot/1]).
+-export([get_key_from_command/1]).
 -endif.
 
 -include("eredis_cluster.hrl").
@@ -973,8 +974,6 @@ get_key_from_command([[X|Y]|Z]) when is_list(X) ->
     end;
 get_key_from_command([Term1, Term2|Rest]) when is_bitstring(Term1) ->
     get_key_from_command([bitstring_to_list(Term1), Term2|Rest]);
-get_key_from_command([Term1, Term2|Rest]) when is_bitstring(Term2) ->
-    get_key_from_command([Term1, bitstring_to_list(Term2)|Rest]);
 get_key_from_command([Term1, Term2|Rest]) ->
     case string:to_lower(Term1) of
         "info" ->
@@ -986,27 +985,49 @@ get_key_from_command([Term1, Term2|Rest]) ->
         "slaveof" ->
             undefined;
         "eval" ->
-            get_key_from_rest(Rest);
+            nth_arg(2, Rest);
         "evalsha" ->
-            get_key_from_rest(Rest);
+            nth_arg(2, Rest);
+        "xinfo" ->
+            nth_arg(1, Rest);
+        "xgroup" ->
+            nth_arg(1, Rest);
+        "xread" ->
+            arg_after_keyword("streams", [Term2|Rest]);
+        "xreadgroup" ->
+            arg_after_keyword("streams", [Term2|Rest]);
         _ ->
-            Term2
+            maybe_binary_to_list(Term2)
     end;
 get_key_from_command(_) ->
     undefined.
 
-%% =============================================================================
-%% @doc Get key for command where the key is in th 4th position (eval and
-%% evalsha commands)
-%% @end
-%% =============================================================================
--spec get_key_from_rest([anystring()]) -> string() | undefined.
-get_key_from_rest([_, KeyName|_]) when is_bitstring(KeyName) ->
-    bitstring_to_list(KeyName);
-get_key_from_rest([_, KeyName|_]) when is_list(KeyName) ->
-    KeyName;
-get_key_from_rest(_) ->
-    undefined.
+maybe_binary_to_list(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+maybe_binary_to_list(Str) ->
+    Str.
+
+nth_arg(N, Args) ->
+    case length(Args) of
+        M when M >= N ->
+            maybe_binary_to_list(lists:nth(N, Args));
+        _ ->
+            undefined
+    end.
+
+arg_after_keyword(_Keyword, []) ->
+    undefined;
+arg_after_keyword(_Keyword, [_Arg]) ->
+    undefined;
+arg_after_keyword(Keyword, [Arg|Args]) when is_binary(Arg) ->
+    arg_after_keyword(Keyword, [binary_to_list(Arg)|Args]);
+arg_after_keyword(Keyword, [Arg|Args]) ->
+    case string:to_lower(Arg) of
+        Keyword ->
+            maybe_binary_to_list(hd(Args));
+        _Mismatch ->
+            arg_after_keyword(Keyword, Args)
+    end.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

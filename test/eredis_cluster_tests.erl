@@ -295,6 +295,8 @@ basic_test_() ->
            end
          },
 
+         { "command support", fun test_command_support/0 },
+
          { "get cluster info with pool specified in response",
            fun () ->
                    Result = eredis_cluster:qa2(["CLUSTER", "SLOTS"]),
@@ -383,6 +385,38 @@ basic_test_() ->
       ]
     }
 }.
+
+test_command_support() ->
+    %% Test that we can extract the key from various commands. We only care
+    %% about the first key in a command.
+    Commands =
+        [
+         %% Default: Key is 2nd (directly after the command name)
+         ["xadd", "k", "MAXLEN", "42", "*", "foo", "bar"],
+         ["set", "k", "value"],
+
+         %% Key is 3rd (after subcommand)
+         ["xinfo", "stream", "k"],
+         ["xinfo", "consumers", "k", "somegroup"],
+         ["xgroup", "create", "k", "somegroup", "$"],
+         ["XGROUP", "CREATECONSUMER", "k", "somegroup", "myconsumer123"],
+
+         %% Key is 4th
+         ["eval", "return redis.call('set',KEYS[1],'bar')", "1", "k"],
+         ["evalsha", "adc98b7d8c89adc87b8dca98", "1", "k"],
+
+         %% Key is after the STREAMS keyword
+         ["xread", "count", "42", "streams", "k", "k2", "1-0", "1-0"],
+         ["xreadgroup", "GROUP", "gr", "my-consumer", "COUNT", "42",
+          "STREAMS", "k", "foo", "42-0", "42-0"]
+        ],
+    lists:foreach(fun test_command_support/1, Commands).
+
+test_command_support(Command) ->
+    Key = eredis_cluster:get_key_from_command(Command),
+    CommandGetKeys = ["command", "getkeys" | Command],
+    {ok, [ExpectedKey | _]} = eredis_cluster:qk(CommandGetKeys, "dummy-key"),
+    ?assertEqual(binary_to_list(ExpectedKey), Key).
 
 -spec get_master_nodes() -> [{NodeId::string(), PoolName::atom()}].
 get_master_nodes() ->
