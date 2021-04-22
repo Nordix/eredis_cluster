@@ -335,14 +335,14 @@ basic_test_() ->
 
          { "get cluster nodes",
            fun () ->
-                   ClusterNodes = eredis_cluster_monitor:get_cluster_nodes(),
+                   ClusterNodes = eredis_cluster:get_cluster_nodes(),
                    ?assertNotEqual(0, erlang:length(ClusterNodes))
            end
          },
 
          { "get cluster slots",
            fun () ->
-                   ClusterSlots = eredis_cluster_monitor:get_cluster_slots(),
+                   ClusterSlots = eredis_cluster:get_cluster_slots(),
                    ?assertNotEqual(0, erlang:length(ClusterSlots))
            end
          },
@@ -430,7 +430,7 @@ test_command_support(Command) ->
 
 -spec get_master_nodes() -> [{NodeId::string(), PoolName::atom()}].
 get_master_nodes() ->
-    ClusterNodesInfo = eredis_cluster_monitor:get_cluster_nodes(),
+    ClusterNodesInfo = eredis_cluster:get_cluster_nodes(),
     lists:foldl(fun(Node, Acc) ->
                         case lists:nth(3, Node) of %% <flags>
                             Role when Role == <<"myself,master">>;
@@ -446,7 +446,7 @@ get_master_nodes() ->
 
 -spec get_slave_nodes() -> [{NodeId::string(), Ip::string(), Port::string()}].
 get_slave_nodes() ->
-    ClusterNodesInfo = eredis_cluster_monitor:get_cluster_nodes(),
+    ClusterNodesInfo = eredis_cluster:get_cluster_nodes(),
     lists:foldl(fun(Node, Acc) ->
                         case lists:nth(3, Node) of %% <flags>
                             Role when Role == <<"myself,slave">>;

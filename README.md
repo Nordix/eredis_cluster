@@ -35,10 +35,8 @@ eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
   - `get_all_pools/0`:        Get all pools (one for each Redis node in cluster)
   - `get_pool_by_command/1`:  Get which Redis pool that handles a given command
   - `get_pool_by_key/1`:      Get which Redis pool that handles a given key
-  - `eredis_cluster_monitor:get_cluster_nodes/0`: Get cluster nodes information
-    list (CLUSTER NODES)
-  - `eredis_cluster_monitor:get_cluster_slots/0`: Get cluster slots information
-    (CLUSTER SLOTS)
+  - `get_cluster_nodes/0`:    Get cluster nodes information (CLUSTER NODES)
+  - `get_cluster_slots/0`:    Get cluster slots information (CLUSTER SLOTS)
 * Changed behaviour:
   - `qa/1`:                   Query all nodes, now with re-attempts
   - `transaction/2`:          The second argument can be a Redis node (pool) or

@@ -14,10 +14,7 @@
 -export([refresh_mapping/1, async_refresh_mapping/1]).
 -export([get_state/0, get_state_version/1]).
 -export([get_pool_by_slot/1, get_pool_by_slot/2]).
--export([get_all_pools/1]).
-
-%% Public API.
--export([get_all_pools/0]).
+-export([get_all_pools/0, get_all_pools/1]).
 -export([get_cluster_slots/0, get_cluster_nodes/0]).
 
 %% gen_server.

@@ -34,6 +34,9 @@
 %% Specific pools (specific Redis nodes)
 -export([get_pool_by_command/1, get_pool_by_key/1, get_all_pools/0]).
 
+%% Cluster information
+-export([get_cluster_slots/0, get_cluster_nodes/0]).
+
 -ifdef(TEST).
 -export([get_key_slot/1]).
 -export([get_key_from_command/1]).
@@ -918,6 +921,38 @@ get_pool_by_key(Key) ->
 -spec get_all_pools() -> [atom()].
 get_all_pools() ->
     eredis_cluster_monitor:get_all_pools().
+
+%% =============================================================================
+%% @doc Get cluster slots information.
+%%
+%% Fetch information about slots from an already connected node or
+%% from an init node if no nodes are connected.
+%%
+%% Throws an exception if all communication attempts fails.
+%% @end
+%% =============================================================================
+-spec get_cluster_slots() -> [[bitstring() | [bitstring()]]].
+get_cluster_slots() ->
+    eredis_cluster_monitor:get_cluster_slots().
+
+%% =============================================================================
+%% @doc Get cluster nodes information.
+%%
+%% Fetch information about all cluster nodes from an already connected node or
+%% from an init node if no nodes are connected.
+%%
+%% Returns a list of node elements where each node element consists of
+%% following information:
+%% <pre>[id, ip:port@cport, flags, master, ping-sent, pong-recv, config-epoch, link-state, Slot1, ..., SlotN]
+%% </pre>
+%% See [https://redis.io/commands/cluster-nodes#serialization-format] for details.
+%%
+%% Throws an exception if all communication attempts fails.
+%% @end
+%% =============================================================================
+-spec get_cluster_nodes() -> [[bitstring()]].
+get_cluster_nodes() ->
+    eredis_cluster_monitor:get_cluster_nodes().
 
 %% =============================================================================
 %% @doc Return the hash slot from the key
