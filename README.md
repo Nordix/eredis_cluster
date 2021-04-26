@@ -100,13 +100,13 @@ eredis_cluster:qk(["FLUSHDB"], "TEST").
 
 The directory contains a Makefile that uses rebar3.
 
-Setup a Redis cluster and start the tests using following commands:
+Setup Redis clusters and start the tests using following commands:
 
 ```bash
 make        # ... or rebar3 compile
-make start  # Start a local Redis cluster using Docker
-make test   # Run tests towards the cluster
-make stop   # Teardown the Redis cluster
+make start  # Start local Redis clusters using Docker
+make test   # Run tests towards the clusters
+make stop   # Teardown the Redis clusters
 ```
 
 ## Configuration
