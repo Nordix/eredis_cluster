@@ -253,6 +253,9 @@ disconnect(Nodes::[atom()]) -&gt; ok
 
 Disconnects a set of nodes.
 
+Note: Unused nodes are disconnected automatically when the slot mapping is
+updated.
+
 <a name="eval-4"></a>
 
 ### eval/4 ###

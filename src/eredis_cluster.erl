@@ -106,6 +106,9 @@ connect(InitServers, Options) ->
 
 %% =============================================================================
 %% @doc Disconnects a set of nodes.
+%%
+%% Note: Unused nodes are disconnected automatically when the slot mapping is
+%% updated.
 %% @end
 %% =============================================================================
 -spec disconnect(Nodes :: [atom()]) -> ok.

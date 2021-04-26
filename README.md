@@ -1,4 +1,4 @@
-# eredis_cluster (Nordix fork)
+# eredis_cluster
 
 eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
 
@@ -8,52 +8,26 @@ eredis_cluster is a wrapper for eredis to support cluster mode of Redis 3.0.0+
 
 ## Contents
 
-* [Improvements compared to adrienmo/eredis_cluster](#improvements-compared-to-adrienmoeredis_cluster)
+* [History](#history)
 * [Usage](#usage)
 * [Compilation and tests](#compilation-and-tests)
 * [Configuration](#configuration)
 * [Troubleshooting](#troubleshooting)
 * [See also](#see-also)
 
-## Improvements compared to `adrienmo/eredis_cluster`
+## History
 
-* Support of TLS introduced in Redis 6
-* Uses [Nordix/eredis](https://github.com/Nordix/eredis) (TLS, error handling fixes)
-* Many Dialyzer corrections
-* Elvis code formatting
-* Optimizations
-  * Refresh slot mapping reuses existing connection when
-    possible and don't refresh mapping when not needed, e.g. when a pool is busy
-  * Don't use an extra wrapper process around each eredis connection process
-* Containerized testing
-* Testing using [simulated Redis cluster](https://github.com/Nordix/fakeredis_cluster) for corner cases such as ASK redirects
-* Added API functions:
-  - `connect/2`:              Connect to init nodes, with options
-  - `qa2/1`:                  Query all nodes with re-attempts, returns
-                              `[{Node, Result}, ...]`
-  - `qn/2`:                   Query to specific Redis node
-  - `q_noreply/1`:            Query a single Redis node but wont wait for its result
-  - `load_script/1`:          Pre-load script to all Redis nodes
-  - `scan/4`:                 Perform a scan command on given Redis nodes
-  - `disconnect/1`:           Disconnect from given Redis node
-  - `get_all_pools/0`:        Get all pools (one for each Redis node in cluster)
-  - `get_pool_by_command/1`:  Get which Redis pool that handles a given command
-  - `get_pool_by_key/1`:      Get which Redis pool that handles a given key
-  - `eredis_cluster_monitor:get_cluster_nodes/0`: Get cluster nodes information
-    list (CLUSTER NODES)
-  - `eredis_cluster_monitor:get_cluster_slots/0`: Get cluster slots information
-    (CLUSTER SLOTS)
-* Changed behaviour:
-  - `qa/1`:                   Query all nodes, now with re-attempts
-  - `transaction/2`:          The second argument can be a Redis node (pool) or
-                              a key, instead of only a key
+This project was started by [Adrien
+Moreau](https://github.com/adrienmo/eredis_cluster) in 2015. In 2021,
+maintainance was taken over by the Nordix Foundation (backed by Ericsson) and
+the Hex package is released from the Nordix fork since 0.6.0.
+
+See also [CHANGELOG.md](CHANGELOG.md).
 
 ## Usage
 
 For the full reference manual, see the generated documentation in
 [doc/eredis_cluster.md](doc/eredis_cluster.md).
-
-Published documentation can also be found on [hexdocs](https://hexdocs.pm/eredis_cluster/).
 
 ```erlang
 %% Start the application and, if init nodes are defined in the application
@@ -71,7 +45,7 @@ eredis_cluster:qp([["LPUSH", "a", "a"], ["LPUSH", "a", "b"], ["LPUSH", "a", "c"]
 %% keep the command order
 eredis_cluster:qmn([["GET", "a"], ["GET", "b"], ["GET", "c"]]).
 
-%% Transaction
+%% Transaction (a pipeline wrapped in MULTI-EXEC; returns the result of EXEC)
 eredis_cluster:transaction([["LPUSH", "a", "a"], ["LPUSH", "a", "b"], ["LPUSH", "a", "c"]]).
 
 %% Transaction Function
@@ -96,15 +70,15 @@ end,
 Result = optimistic_locking_transaction(Key, ["GET", Key], Function),
 {ok, {TransactionResult, CustomVar}} = Result.
 
-%% Atomic Key update
+%% Atomic Key update (using optimistic locking transaction)
 Fun = fun(Var) -> binary_to_integer(Var) + 1 end,
 eredis_cluster:update_key("abc", Fun).
 
-%% Atomic Field update
+%% Atomic Field update (using optimistic locking transaction)
 Fun = fun(Var) -> binary_to_integer(Var) + 1 end,
 eredis_cluster:update_hash_field("abc", "efg", Fun).
 
-%% Load LUA script on all nodes
+%% Pre-load Lua script on all nodes
 Script = "return redis.call('set', KEYS[1], ARGV[1]);",
 {ok, ScriptHash} = eredis_cluster:load_script(Script),
 
