@@ -251,6 +251,9 @@ basic_test_() ->
                    [{DstNodeId, DstPool}, _] = [{NI, P} || {NI, P} <- MasterNodeList,
                                                            {NI, P} =/= {SrcNodeId, SrcPool}],
 
+                   %% Get ranges before migration, for comparing later.
+                   {ok, RangesBefore} = q_pool(DstPool, ["CLUSTER", "SLOTS"]),
+
                    %% Start the migration/resharding
                    CmdImp = ["CLUSTER", "SETSLOT", Slot, "IMPORTING", SrcNodeId],
                    ?assertMatch({ok, _}, q_pool(DstPool, CmdImp)),
@@ -266,9 +269,12 @@ basic_test_() ->
                    Result = eredis_cluster:qa(CmdNode),
                    ?assertEqual(none, proplists:lookup(error, Result)),
 
-                   %% Make sure we now have more ranges of slots than master nodes
+                   %% Expected number of ranges after migration: one more than
+                   %% before except if the range 1..N was already in the dst
+                   %% node, since in this case 0..0 and 1..N was merged into
+                   %% 0..N, so one range less than before.
                    {ok, Ranges} = q_pool(DstPool, ["CLUSTER", "SLOTS"]),
-                   ?assertNotEqual(erlang:length(MasterNodeList), erlang:length(Ranges)),
+                   ?assertNotEqual(length(RangesBefore), length(Ranges)),
 
                    %% Make sure we only get one answer per master
                    SizeResult = eredis_cluster:qa(["DBSIZE"]),
