@@ -10,7 +10,9 @@
     {applications, [
         kernel,
         stdlib,
-        ssl
+        ssl,
+        eredis,
+        poolboy
     ]},
     {mod, {eredis_cluster, []}},
     {env, []}
