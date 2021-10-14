@@ -11,7 +11,12 @@ defmodule EredisCluster.Mixfile do
       description: "An erlang wrapper for eredis library to support cluster mode",
       docs: [
         main: "readme",
-        extras: ["README.md", "CHANGELOG.md", "doc/eredis_cluster.md", "doc/eredis_cluster_monitor.md"],
+        extras: [
+          "README.md",
+          "CHANGELOG.md",
+          "doc/eredis_cluster.md",
+          "doc/eredis_cluster_monitor.md"
+        ],
         api_reference: false
       ],
       elixir: ">= 1.5.1",
@@ -32,15 +37,23 @@ defmodule EredisCluster.Mixfile do
   defp deps do
     [
       {:poolboy, "1.5.2"},
-      {:eredis, "~> 1.3.3"},
+      {:eredis, "~> 1.4"},
       {:ex_doc, "~> 0.24", only: :dev, runtime: false}
     ]
   end
 
   defp package do
     [
-      files: ["src", "include", "mix.exs", "rebar.config", "README.md",
-              "CHANGELOG.md", "LICENSE", "VERSION"],
+      files: [
+        "src",
+        "include",
+        "mix.exs",
+        "rebar.config",
+        "README.md",
+        "CHANGELOG.md",
+        "LICENSE",
+        "VERSION"
+      ],
       maintainers: ["Viktor Söderqvist", "Björn Svensson"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url}
