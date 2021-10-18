@@ -1,6 +1,11 @@
 Change log
 ==========
 
+0.6.1
+-----
+
+* Let [Eredis](https://github.com/Nordix/eredis) version to be 1.4 to 2.0 on mix and 1.4.1 on rebar
+
 0.6.0
 -----
 

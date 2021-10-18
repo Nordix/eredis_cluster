@@ -37,7 +37,7 @@ defmodule EredisCluster.Mixfile do
   defp deps do
     [
       {:poolboy, "1.5.2"},
-      {:eredis, "~> 1.3"},
+      {:eredis, "~> 1.4"},
       {:ex_doc, "~> 0.24", only: :dev, runtime: false}
     ]
   end
