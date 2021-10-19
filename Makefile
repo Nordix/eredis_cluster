@@ -71,6 +71,7 @@ publish: edoc
 	mix hex.publish
 
 start:
+	priv/generate-test-certs.sh
 	docker run --name redis-cluster -d -e IP=0.0.0.0 -e INITIAL_PORT=30001 \
 	  -p 30001-30006:30001-30006 ${REDIS_CONTAINER}
 	docker run --name redis-cluster-tls -d -e IP=0.0.0.0 -e INITIAL_PORT=31001 \
