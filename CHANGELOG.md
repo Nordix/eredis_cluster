@@ -5,6 +5,7 @@ Change log
 -----
 
 * Let [Eredis](https://github.com/Nordix/eredis) version to be 1.4 to 2.0 on mix and 1.4.1 on rebar
+* Update CI jobs and generate TLS test certs on the fly to avoid outdated test certs
 
 0.6.0
 -----
