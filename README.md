@@ -153,7 +153,10 @@ To configure the Redis cluster client, you can use an application variable
             {pool_max_overflow, 10},
 
             {password, "redis_pw"},
-            {socket_options, [{send_timeout, 6000}, ...]},
+            {socket_options, [{send_timeout, 500},
+                              {send_timeout_close, true},
+                              {nodelay, true},
+                              {keepalive, true}]},
             {tls, [{cacertfile, "ca.crt"}, ...]}
         ]
     }
@@ -167,7 +170,32 @@ retrieve them through the command `CLUSTER SLOTS` at runtime.
 * `pool_size`: Number of connected clients to each Redis node. Default: `10`
 * `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
 * `password`: Password to use for a Redis cluster configured with `requirepass`. Default: `""` (i.e. AUTH not sent)
-* `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`
+* `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`.
+   However, there are some options added by default by the underlaying eredis
+   client. We suggest the following socket options, in order to efficiently
+   detect a failing connection and trigger an update of the cluster topology in
+   case of failover and other Redis Cluster events:
+
+   * `{send_timeout, Timeout}` and `{send_timeout_close, true}`: Makes sure send
+     errors are not ignored. Triggers a reconnect on send errors.
+   * `{nodelay, true}`: Send TCP packets immediately. A Redis command is sent as
+     a whole, not in pieces, so there is no point delaying the send.
+   * `{keepalive, true}`: Enables TCP keepalive. Enabled by default on Linux.
+   * Raw Linux-specific options, to detect a failing socket as soon as possible:
+
+     ```Erlang
+     %% See Linux kernel file: include/uapi/linux/tcp.h
+     %%  - send keep-alive packets after 1s (minimum possible) of no traffic
+     %%  - time out after one failed try if the keep-alive is not acknowledged
+     %% TCP_KEEPIDLE in seconds - cannot be more granular here:
+     {raw, 6, 4, <<1:32/native>>},
+     %% TCP_KEEPCNT - try only once, fail fast, better than hanging:
+     {raw, 6, 6, <<1:32/native>>},
+     %% TCP_KEEPINTVL - probably does not matter when KEEPCNT == 1:
+     {raw, 6, 5, <<1:32/native>>},
+     %% TCP_USER_TIMEOUT in milliseconds - should be > TCP_KEEPIDLE:
+     {raw, 6, 18, <<1100:32/native>>}
+     ```
 * `tls`: Enable TLS/SSL and use specified [TLSOptions](https://erlang.org/doc/man/ssl.html#type-client_option). Default: TLS not enabled.
 
 ### Configuring via API
