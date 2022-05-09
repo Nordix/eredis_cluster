@@ -171,31 +171,34 @@ retrieve them through the command `CLUSTER SLOTS` at runtime.
 * `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
 * `password`: Password to use for a Redis cluster configured with `requirepass`. Default: `""` (i.e. AUTH not sent)
 * `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`.
-   However, there are some options added by default by the underlaying eredis
+   However, there are some options added by default by the underlying eredis
    client. We suggest the following socket options, in order to efficiently
    detect a failing connection and trigger an update of the cluster topology in
    case of failover and other Redis Cluster events:
 
    * `{send_timeout, Timeout}` and `{send_timeout_close, true}`: Makes sure send
      errors are not ignored. Triggers a reconnect on send errors.
+
    * `{nodelay, true}`: Send TCP packets immediately. A Redis command is sent as
      a whole, not in pieces, so there is no point delaying the send.
+
    * `{keepalive, true}`: Enables TCP keepalive. Enabled by default on Linux.
-   * Raw Linux-specific options, to detect a failing socket as soon as possible:
+
+   * Raw Linux-specific options can help to detect a hanging socket quickly. See
+     Linux kernel file for details: `include/uapi/linux/tcp.h`. This example
+     sets very strict values for near real-time failure detected. Consider
+     choosing values that make sense for your application:
 
      ```Erlang
-     %% See Linux kernel file: include/uapi/linux/tcp.h
-     %%  - send keep-alive packets after 1s (minimum possible) of no traffic
-     %%  - time out after one failed try if the keep-alive is not acknowledged
-     %% TCP_KEEPIDLE in seconds - cannot be more granular here:
-     {raw, 6, 4, <<1:32/native>>},
-     %% TCP_KEEPCNT - try only once, fail fast, better than hanging:
-     {raw, 6, 6, <<1:32/native>>},
-     %% TCP_KEEPINTVL - probably does not matter when KEEPCNT == 1:
-     {raw, 6, 5, <<1:32/native>>},
-     %% TCP_USER_TIMEOUT in milliseconds - should be > TCP_KEEPIDLE:
-     {raw, 6, 18, <<1100:32/native>>}
+     %% TCP_USER_TIMEOUT (in milliseconds); should be > TCP_KEEPIDLE if
+     %% keepalive is enabled:
+     {raw, 6, 18, <<1100:32/native>>},
+     %% {keepalive, true} must be set for these to take effect:
+     {raw, 6, 4, <<1:32/native>>},  % TCP_KEEPIDLE (in seconds)
+     {raw, 6, 5, <<1:32/native>>},  % TCP_KEEPINTVL (in seconds)
+     {raw, 6, 6, <<1:32/native>>}   % TCP_KEEPCNT
      ```
+
 * `tls`: Enable TLS/SSL and use specified [TLSOptions](https://erlang.org/doc/man/ssl.html#type-client_option). Default: TLS not enabled.
 
 ### Configuring via API
