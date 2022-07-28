@@ -151,7 +151,7 @@ To configure the Redis cluster client, you can use an application variable
             ]},
             {pool_size, 5},
             {pool_max_overflow, 10},
-
+            {username, "redis_user"},
             {password, "redis_pw"},
             {socket_options, [{send_timeout, 500},
                               {send_timeout_close, true},
@@ -169,10 +169,26 @@ retrieve them through the command `CLUSTER SLOTS` at runtime.
 * `init_nodes`: List of Redis nodes to fetch cluster information from. Default: `[]`
 * `pool_size`: Number of connected clients to each Redis node. Default: `10`
 * `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
-* `password`: Password to use for a Redis cluster configured with `requirepass`. Default: `""` (i.e. AUTH not sent)
-* `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option). Enables selecting host interface or perf. tuning. Default: `[]`.
+* `username`: Username for [Redis ACL](https://redis.io/docs/manual/security/acl/) authentication.
+   Alternatives are a 0-ary function that returns the username, a string or iodata or the atom `undefined` for no username. Default: `undefined`
+
+   *Note: A 0-ary function is preferred as it prevents secrets from appearing in logs and stacktraces.*
+
+* `password`: Password for [Redis ACL](https://redis.io/docs/manual/security/acl/) authentication.
+   Alternatives are a 0-ary function that returns the password, a string or iodata or the atom `undefined` for no password. Default: `undefined`
+
+   *Note: A 0-ary function is preferred as it prevents secrets from appearing in logs and stacktraces.*
+
+* `socket_options`: Extra socket [options](http://erlang.org/doc/man/gen_tcp.html#type-option).
+   Enables selecting host interface or performance tuning. Default: `[]`.
    However, there are some options added by default by the underlying eredis
-   client. We suggest the following socket options, in order to efficiently
+   client.
+
+   The socket is set to `{active, N}` with N = 10 by default.
+   This can be tuned by including `{active, N}` where N must be an integer or true.
+   Active once and false are not supported.
+
+   We suggest the following socket options, in order to efficiently
    detect a failing connection and trigger an update of the cluster topology in
    case of failover and other Redis Cluster events:
 
