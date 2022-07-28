@@ -9,8 +9,14 @@ jobs:
   ci:
     strategy:
       matrix:
-        include:
-          - otp-version: 23.1
+        include: # See https://www.erlang-solutions.com/downloads/
+          - otp-version: 25.0.3
+            platform: ubuntu-20.04
+            lsb_release: focal
+          - otp-version: 24.3.3
+            platform: ubuntu-20.04
+            lsb_release: focal
+          - otp-version: 23.3.4.5
             platform: ubuntu-20.04
             lsb_release: focal
           - otp-version: 22.3.4.9
@@ -45,7 +51,7 @@ jobs:
           sudo dpkg --install $DEB_NAME
 
       - name: Install compatible rebar3 version
-        if: ${{ startsWith(matrix.otp-version, '20.') || startsWith(matrix.otp-version, '21.') }}
+        if: ${{ startsWith(matrix.otp-version, '21.') || startsWith(matrix.otp-version, '22.') }}
         run: |
           git clone https://github.com/erlang/rebar3.git
           cd rebar3 && git checkout 3.15.2 && ./bootstrap && ./rebar3 local install
