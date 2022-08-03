@@ -221,7 +221,7 @@ connect(InitServers) -&gt; ok
 </code>
 </pre>
 
-<ul class="definitions"><li><code>InitServers = [{Address::string(), Port::<a href="inet.md#type-port_number">inet:port_number()</a>}]</code></li></ul>
+<ul class="definitions"><li><code>InitServers = [{Address::string(), Port::<a href="https://www.erlang.org/doc/man/inet.html#type-port_number">inet:port_number()</a>}]</code></li></ul>
 
 Connect to a Redis cluster using a set of init nodes.
 
@@ -240,7 +240,7 @@ connect(InitServers, Options) -&gt; ok
 </code>
 </pre>
 
-<ul class="definitions"><li><code>InitServers = [{Address::string(), Port::<a href="inet.md#type-port_number">inet:port_number()</a>}]</code></li><li><code>Options = <a href="#type-options">options()</a></code></li></ul>
+<ul class="definitions"><li><code>InitServers = [{Address::string(), Port::<a href="https://www.erlang.org/doc/man/inet.html#type-port_number">inet:port_number()</a>}]</code></li><li><code>Options = <a href="#type-options">options()</a></code></li></ul>
 
 Connects to a Redis cluster using a set of init nodes, with options.
 
@@ -256,7 +256,7 @@ connect(Cluster, InitServers, Options) -&gt; ok
 </code>
 </pre>
 
-<ul class="definitions"><li><code>Cluster = atom()</code></li><li><code>InitServers = [{Address::string(), Port::<a href="inet.md#type-port_number">inet:port_number()</a>}]</code></li><li><code>Options = <a href="#type-options">options()</a></code></li></ul>
+<ul class="definitions"><li><code>Cluster = atom()</code></li><li><code>InitServers = [{Address::string(), Port::<a href="https://www.erlang.org/doc/man/inet.html#type-port_number">inet:port_number()</a>}]</code></li><li><code>Options = <a href="#type-options">options()</a></code></li></ul>
 
 Connects to a Redis cluster using a set of init nodes, with options and
 cluster name.
