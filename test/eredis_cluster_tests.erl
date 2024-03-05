@@ -431,7 +431,7 @@ test_command_support(Command) ->
         {ok, [ExpectedKey | _]} ->
             ?assertEqual(binary_to_list(ExpectedKey), Key);
         {error, Error} ->
-            ?assertEqual(dummy, {Command, Error})
+            error(cmd_fail, {Command, Error})
     end.
 
 -spec get_master_nodes() -> [{NodeId::string(), PoolName::atom()}].
