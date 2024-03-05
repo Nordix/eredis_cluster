@@ -215,7 +215,7 @@ qp(Commands) -> q(Commands).
 %% master fails, the mapping is refreshed and the query is retried.
 -spec qa(Command) -> Result
               when Command :: redis_command(),
-                   Result  :: [redis_transaction_result()] |
+                   Result  :: [redis_result()] |
                               {error, no_connection}.
 qa(Command) -> qa(?default_cluster, Command, 0, []).
 
@@ -224,7 +224,7 @@ qa(Command) -> qa(?default_cluster, Command, 0, []).
 -spec qa(Cluster, Command) -> Result
               when Cluster :: atom(),
                    Command :: redis_command(),
-                   Result  :: [redis_transaction_result()] |
+                   Result  :: [redis_result()] |
                               {error, no_connection}.
 qa(Cluster, Command) -> qa(Cluster, Command, 0, []).
 
