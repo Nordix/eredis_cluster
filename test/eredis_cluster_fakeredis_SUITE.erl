@@ -45,7 +45,7 @@ t_connect(Config) when is_list(Config) ->
     fakeredis_cluster:start_link([20001, 20002, 20003]),
 
     ct:print("Perform inital connect..."),
-    ?assertMatch(ok, eredis_cluster:connect([{"127.0.0.1", 20001}])),
+    ok = eredis_cluster:connect([{"127.0.0.1", 20001}]),
 
     ct:print("Test access.."),
     ?assertEqual({ok, <<"OK">>}, eredis_cluster:q(["SET", "key", "value"])),
@@ -68,7 +68,7 @@ t_connect_tls(Config) when is_list(Config) ->
                       {keyfile,    filename:join([Dir, "client.key"])},
                       {verify,                 verify_peer},
                       {server_name_indication, "Server"}]}],
-    ?assertMatch(ok, eredis_cluster:connect([{"127.0.0.1", 20001}], Options)),
+    ok = eredis_cluster:connect([{"127.0.0.1", 20001}], Options),
 
     ct:print("Test access.."),
     ?assertEqual({ok, <<"OK">>}, eredis_cluster:q(["SET", "key", "value"])),
@@ -95,7 +95,7 @@ t_pool_full(Config) when is_list(Config) ->
     application:set_env(eredis_cluster, pool_max_overflow, 0),
 
     ct:print("Perform inital connect..."),
-    ?assertMatch(ok, eredis_cluster:connect([{"127.0.0.1", 20001}])),
+    ok = eredis_cluster:connect([{"127.0.0.1", 20001}]),
 
     ct:print("Test concurrent access..."),
     MainPid = self(),
@@ -323,7 +323,7 @@ t_eval_failure_handling(Config) when is_list(Config) ->
     %% This testcase triggers a socket disconnection right before the script loading.
     Port = 20011,
     fakeredis_cluster:start_link([Port]),
-    ?assertMatch(ok, eredis_cluster:connect([{"127.0.0.1", Port}])),
+    ok = eredis_cluster:connect([{"127.0.0.1", Port}]),
 
     Script = <<"return redis.call('SET', KEYS[1], ARGV[1]);">>,
     ScriptHash = << << if N >= 10 -> N -10 + $a; true -> N + $0 end >> || <<N:4>> <= crypto:hash(sha, Script) >>,

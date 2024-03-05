@@ -18,25 +18,25 @@ explicit_cluster_test() ->
     %% No implicitly started default cluster
     ?assertEqual([], supervisor:which_children(eredis_cluster_sup_sup)),
 
-    ?assertEqual(ok, eredis_cluster:connect(mycluster,
-                                            [{"127.0.0.1", 31001},
-                                             {"127.0.0.1", 31002}],
-                                            tls_options())),
+    ok = eredis_cluster:connect(mycluster,
+                                [{"127.0.0.1", 31001},
+                                 {"127.0.0.1", 31002}],
+                                tls_options()),
     ?assertEqual({ok, <<"OK">>},
                  eredis_cluster:q(mycluster, ["SET", "foo", "bar"])),
     ?assertEqual({ok, <<"bar">>},
                  eredis_cluster:q(mycluster, ["GET", "foo"])),
-    ?assertMatch(ok, eredis_cluster:disconnect(mycluster)),
+    ok = eredis_cluster:disconnect(mycluster),
     ?assertMatch(ok, eredis_cluster:stop()).
 
 explicit_and_default_cluster_test() ->
     application:set_env(eredis_cluster, init_nodes, [{"127.0.0.1", 30001},
                                                      {"127.0.0.1", 30002}]),
     ?assertMatch(ok, eredis_cluster:start()),
-    ?assertEqual(ok, eredis_cluster:connect(mycluster,
-                                            [{"127.0.0.1", 31001},
-                                             {"127.0.0.1", 31002}],
-                                            tls_options())),
+    ok = eredis_cluster:connect(mycluster,
+                                [{"127.0.0.1", 31001},
+                                 {"127.0.0.1", 31002}],
+                                tls_options()),
 
     %% Both clusters are non-empty and no overlap
     Cluster1Nodes = eredis_cluster:get_all_pools(),
@@ -57,7 +57,7 @@ explicit_and_default_cluster_test() ->
                  eredis_cluster:q(mycluster, ["GET", "foo"])),
 
     %% Disconnect explicit cluster doesn't affect default cluster
-    ?assertMatch(ok, eredis_cluster:disconnect(mycluster)),
+    ok = eredis_cluster:disconnect(mycluster),
     ?assertEqual({ok, <<"bar">>},
                  eredis_cluster:q(["GET", "foo"])),
 
