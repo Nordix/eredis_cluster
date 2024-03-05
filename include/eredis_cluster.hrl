@@ -9,7 +9,8 @@
 -type redis_success_result() :: Result::bitstring() | undefined.
 -type redis_simple_result() :: {ok, redis_success_result()}
     | {error, redis_error_result()}.
--type redis_pipeline_result() :: [redis_simple_result()].
+-type redis_pipeline_result() :: [redis_simple_result()]
+    | {error, redis_error_result()}.
 -type redis_transaction_result() :: {ok, [redis_success_result()]}
     | {ok, undefined} % EXEC reply undefined if the transaction was aborted
     | {error, redis_error_result()}.
