@@ -858,7 +858,8 @@ throttle_retries(_) -> timer:sleep(?REDIS_RETRY_DELAY).
 -spec update_key(Key, UpdateFunction) -> Result
               when Key            :: anystring(),
                    UpdateFunction :: fun((any()) -> any()),
-                   Result         :: redis_transaction_result().
+                   Result         :: {ok, any()} |
+                                     optimistic_locking_error_result().
 update_key(Key, UpdateFunction) ->
     UpdateFunction2 = fun(GetResult) ->
         {ok, Var} = GetResult,
@@ -883,8 +884,8 @@ update_key(Key, UpdateFunction) ->
               when Key            :: anystring(),
                    Field          :: anystring(),
                    UpdateFunction :: fun((any()) -> any()),
-                   Result         :: {ok, {[any()], any()}} |
-                                     {error, redis_error_result()}.
+                   Result         :: {ok, {any(), any()}} |
+                                     optimistic_locking_error_result().
 update_hash_field(Key, Field, UpdateFunction) ->
     UpdateFunction2 = fun(GetResult) ->
         {ok, Var} = GetResult,
