@@ -36,7 +36,7 @@ there is no need to use the functions with an explicit Cluster parameter.
 
 
 <pre><code>
-anystring() = string() | bitstring()
+anystring() = string() | binary()
 </code>
 </pre>
 
@@ -96,7 +96,7 @@ redis_command() = <a href="#type-redis_simple_command">redis_simple_command()</a
 
 
 <pre><code>
-redis_error_result() = bitstring() | no_connection | invalid_cluster_command | tcp_closed
+redis_error_result() = binary() | no_connection | invalid_cluster_command | tcp_closed
 </code>
 </pre>
 
@@ -120,7 +120,7 @@ redis_pipeline_command() = [<a href="#type-redis_simple_command">redis_simple_co
 
 
 <pre><code>
-redis_pipeline_result() = [<a href="#type-redis_simple_result">redis_simple_result()</a>]
+redis_pipeline_result() = [<a href="#type-redis_simple_result">redis_simple_result()</a>] | {error, <a href="#type-redis_error_result">redis_error_result()</a>}
 </code>
 </pre>
 
@@ -168,7 +168,7 @@ redis_simple_result() = {ok, <a href="#type-redis_success_result">redis_success_
 
 
 <pre><code>
-redis_success_result() = bitstring() | undefined
+redis_success_result() = binary() | [binary()] | undefined
 </code>
 </pre>
 
@@ -308,7 +308,7 @@ __See also:__ [load_script/1](#load_script-1).
 ### flushdb/0 ###
 
 <pre><code>
-flushdb() -&gt; ok | {error, Reason::bitstring()}
+flushdb() -&gt; ok | {error, <a href="#type-redis_error_result">redis_error_result()</a>}
 </code>
 </pre>
 
@@ -498,7 +498,7 @@ qa(Command) -&gt; Result
 </code>
 </pre>
 
-<ul class="definitions"><li><code>Command = <a href="#type-redis_command">redis_command()</a></code></li><li><code>Result = [<a href="#type-redis_transaction_result">redis_transaction_result()</a>] | {error, no_connection}</code></li></ul>
+<ul class="definitions"><li><code>Command = <a href="#type-redis_command">redis_command()</a></code></li><li><code>Result = [<a href="#type-redis_result">redis_result()</a>] | {error, no_connection}</code></li></ul>
 
 Performs a query on all nodes in the default cluster. When a query to a
 master fails, the mapping is refreshed and the query is retried.
@@ -512,7 +512,7 @@ qa(Cluster, Command) -&gt; Result
 </code>
 </pre>
 
-<ul class="definitions"><li><code>Cluster = atom()</code></li><li><code>Command = <a href="#type-redis_command">redis_command()</a></code></li><li><code>Result = [<a href="#type-redis_transaction_result">redis_transaction_result()</a>] | {error, no_connection}</code></li></ul>
+<ul class="definitions"><li><code>Cluster = atom()</code></li><li><code>Command = <a href="#type-redis_command">redis_command()</a></code></li><li><code>Result = [<a href="#type-redis_result">redis_result()</a>] | {error, no_connection}</code></li></ul>
 
 Performs a query on all nodes in a cluster. When a query to a master
 fails, the mapping is refreshed and the query is retried.
@@ -769,7 +769,7 @@ update_hash_field(Key, Field, UpdateFunction) -&gt; Result
 </code>
 </pre>
 
-<ul class="definitions"><li><code>Key = <a href="#type-anystring">anystring()</a></code></li><li><code>Field = <a href="#type-anystring">anystring()</a></code></li><li><code>UpdateFunction = fun((any()) -&gt; any())</code></li><li><code>Result = {ok, {[any()], any()}} | {error, <a href="#type-redis_error_result">redis_error_result()</a>}</code></li></ul>
+<ul class="definitions"><li><code>Key = <a href="#type-anystring">anystring()</a></code></li><li><code>Field = <a href="#type-anystring">anystring()</a></code></li><li><code>UpdateFunction = fun((any()) -&gt; any())</code></li><li><code>Result = {ok, {any(), any()}} | <a href="#type-optimistic_locking_error_result">optimistic_locking_error_result()</a></code></li></ul>
 
 Update the value of a field stored in a hash by applying the function
 passed in the argument. The operation is done atomically using an optimistic
@@ -786,7 +786,7 @@ update_key(Key, UpdateFunction) -&gt; Result
 </code>
 </pre>
 
-<ul class="definitions"><li><code>Key = <a href="#type-anystring">anystring()</a></code></li><li><code>UpdateFunction = fun((any()) -&gt; any())</code></li><li><code>Result = <a href="#type-redis_transaction_result">redis_transaction_result()</a></code></li></ul>
+<ul class="definitions"><li><code>Key = <a href="#type-anystring">anystring()</a></code></li><li><code>UpdateFunction = fun((any()) -&gt; any())</code></li><li><code>Result = {ok, any()} | <a href="#type-optimistic_locking_error_result">optimistic_locking_error_result()</a></code></li></ul>
 
 Update the value of a key by applying the function passed in the
 argument. The operation is done atomically, using an optimistic locking

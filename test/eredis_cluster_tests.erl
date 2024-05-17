@@ -129,10 +129,10 @@ basic_test_() ->
             end
             },
 
-            { "bitstring support",
+            { "binary support",
             fun () ->
-                eredis_cluster:q([<<"set">>, <<"bitstring">>,<<"support">>]),
-                ?assertEqual({ok, <<"support">>}, eredis_cluster:q([<<"GET">>, <<"bitstring">>]))
+                eredis_cluster:q([<<"set">>, <<"binary">>, <<"support">>]),
+                ?assertEqual({ok, <<"support">>}, eredis_cluster:q([<<"GET">>, <<"binary">>]))
             end
             },
 

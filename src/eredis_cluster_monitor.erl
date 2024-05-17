@@ -175,12 +175,12 @@ remove_list_elements(Xs, Ys) ->
 %% @doc Get cluster slots information.
 %% @end
 %% =============================================================================
--spec get_cluster_slots() -> [[bitstring() | [bitstring()]]].
+-spec get_cluster_slots() -> [[binary() | [binary()]]].
 get_cluster_slots() ->
     get_cluster_slots(?default_cluster).
 
 %% @private
--spec get_cluster_slots(Cluster :: atom()) -> [[bitstring() | [bitstring()]]].
+-spec get_cluster_slots(Cluster :: atom()) -> [[binary() | [binary()]]].
 get_cluster_slots(Cluster) ->
     State = get_state(Cluster),
     Options = get_current_options(State),
@@ -202,18 +202,18 @@ get_cluster_slots(State, Options) ->
 %% See: https://redis.io/commands/cluster-nodes#serialization-format
 %% @end
 %% =============================================================================
--spec get_cluster_nodes() -> [[bitstring()]].
+-spec get_cluster_nodes() -> [[binary()]].
 get_cluster_nodes() ->
     get_cluster_nodes(?default_cluster).
 
--spec get_cluster_nodes(Cluster :: atom()) -> [[bitstring()]].
+-spec get_cluster_nodes(Cluster :: atom()) -> [[binary()]].
 get_cluster_nodes(Cluster) ->
     State = get_state(Cluster),
     Options = get_current_options(State),
     get_cluster_nodes(State, Options).
 
 %% @private
--spec get_cluster_nodes(State :: #state{}, Options :: options()) -> [[bitstring()]].
+-spec get_cluster_nodes(State :: #state{}, Options :: options()) -> [[binary()]].
 get_cluster_nodes(State, Options) ->
     Query = ["CLUSTER", "NODES"],
     FailFn = fun(_Node) -> "" end, %% No default data to use when query fails
@@ -341,12 +341,12 @@ get_cluster_info_from_connection(Connection, Query, FailFn, Node) ->
     end.
 
 -spec get_cluster_slots_from_single_node(#node{}) ->
-    [[bitstring() | [bitstring()]]].
+    [[binary() | [binary()]]].
 get_cluster_slots_from_single_node(Node) ->
     [[<<"0">>, integer_to_binary(?REDIS_CLUSTER_HASH_SLOTS-1),
     [list_to_binary(Node#node.address), integer_to_binary(Node#node.port)]]].
 
--spec parse_cluster_slots(ClusterInfo::[[bitstring() | [bitstring()]]],
+-spec parse_cluster_slots(ClusterInfo::[[binary() | [binary()]]],
                           Options::options()) -> [#slots_map{}].
 parse_cluster_slots(ClusterInfo, Options) ->
     SlotsMaps = parse_cluster_slots(ClusterInfo, 1, []),

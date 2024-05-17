@@ -38,7 +38,7 @@ useful for advanced scenarios.
 ### get_cluster_nodes/0 ###
 
 <pre><code>
-get_cluster_nodes() -&gt; [[bitstring()]]
+get_cluster_nodes() -&gt; [[binary()]]
 </code>
 </pre>
 
@@ -57,7 +57,7 @@ See: https://redis.io/commands/cluster-nodes#serialization-format
 ### get_cluster_nodes/1 ###
 
 <pre><code>
-get_cluster_nodes(Cluster::atom()) -&gt; [[bitstring()]]
+get_cluster_nodes(Cluster::atom()) -&gt; [[binary()]]
 </code>
 </pre>
 
@@ -67,7 +67,7 @@ get_cluster_nodes(Cluster::atom()) -&gt; [[bitstring()]]
 ### get_cluster_slots/0 ###
 
 <pre><code>
-get_cluster_slots() -&gt; [[bitstring() | [bitstring()]]]
+get_cluster_slots() -&gt; [[binary() | [binary()]]]
 </code>
 </pre>
 

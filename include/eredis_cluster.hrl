@@ -1,12 +1,12 @@
--type anystring() :: string() | bitstring().
+-type anystring() :: string() | binary().
 
 -type redis_simple_command() :: [anystring() | integer()].
 -type redis_pipeline_command() :: [redis_simple_command()].
 -type redis_command() :: redis_simple_command() | redis_pipeline_command().
 
--type redis_error_result() :: Reason::bitstring() | no_connection
+-type redis_error_result() :: Reason::binary() | no_connection
     | invalid_cluster_command | tcp_closed.
--type redis_success_result() :: bitstring() | [bitstring()] | undefined.
+-type redis_success_result() :: binary() | [binary()] | undefined.
 -type redis_simple_result() :: {ok, redis_success_result()}
     | {error, redis_error_result()}.
 -type redis_pipeline_result() :: [redis_simple_result()]

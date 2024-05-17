@@ -498,7 +498,7 @@ transaction_retry_loop(Cluster, Transaction, SlotOrPool, Counter) ->
 %% This is equivalent to calling `qa(["FLUSHDB"])' except for the return value.
 %% @end
 %% =============================================================================
--spec flushdb() -> ok | {error, Reason::bitstring()}.
+-spec flushdb() -> ok | {error, redis_error_result()}.
 flushdb() ->
     case qa(["FLUSHDB"]) of
         Result when is_list(Result) ->
@@ -1053,8 +1053,8 @@ get_all_pools(Cluster) ->
 %% @end
 %% =============================================================================
 -spec get_key_slot(Key::anystring()) -> Slot::integer().
-get_key_slot(Key) when is_bitstring(Key) ->
-    get_key_slot(bitstring_to_list(Key));
+get_key_slot(Key) when is_binary(Key) ->
+    get_key_slot(binary_to_list(Key));
 get_key_slot(Key) ->
     KeyToBeHashed = case string:chr(Key, ${) of
         0 ->
@@ -1092,8 +1092,8 @@ get_key_slot(Key) ->
 %% @end
 %% =============================================================================
 -spec get_key_from_command(redis_command()) -> string() | undefined.
-get_key_from_command([[X|Y]|Z]) when is_bitstring(X) ->
-    get_key_from_command([[bitstring_to_list(X)|Y]|Z]);
+get_key_from_command([[X|Y]|Z]) when is_binary(X) ->
+    get_key_from_command([[binary_to_list(X)|Y]|Z]);
 get_key_from_command([[X|Y]|Z]) when is_list(X) ->
     case string:to_lower(X) of
         "multi" ->
@@ -1101,8 +1101,8 @@ get_key_from_command([[X|Y]|Z]) when is_list(X) ->
         _ ->
             get_key_from_command([X|Y])
     end;
-get_key_from_command([Name | Args]) when is_bitstring(Name) ->
-    get_key_from_command([bitstring_to_list(Name) | Args]);
+get_key_from_command([Name | Args]) when is_binary(Name) ->
+    get_key_from_command([binary_to_list(Name) | Args]);
 get_key_from_command([Name | [Arg|_Rest]=Args]) ->
     case string:to_lower(Name) of
         "info"       -> undefined;
