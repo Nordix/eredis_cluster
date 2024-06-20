@@ -1,5 +1,5 @@
-.PHONY: all compile clean test ut ct xref dialyzer elvis cover coverview edoc publish
-.PHONY: start status stop
+.PHONY: all compile clean test ut ct xref dialyzer elvis cover coverview edoc
+.PHONY: upgrade publish start status stop
 
 REBAR ?= rebar3
 
@@ -59,6 +59,12 @@ edoc:
 		sed -i.bak 's|<br />||g' $${file} ; \
 		rm $${file}.bak ; \
 	done
+
+# Upgrade all dependencies and update lock files.
+# rebar3 requires the --all flag from v3.18.0
+upgrade:
+	@$(REBAR) upgrade --all || $(REBAR) upgrade
+	@mix deps.update --all
 
 publish: edoc
 	@touch doc/.build # Prohibit ex_doc to remove .md files
