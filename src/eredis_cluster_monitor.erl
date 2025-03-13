@@ -329,7 +329,7 @@ get_cluster_info_from_connection(Connection, Query, FailFn, Node) ->
     try eredis:q(Connection, Query) of
         {ok, ClusterInfo} ->
             {ok, ClusterInfo};
-        {error, <<"ERR unknown command 'CLUSTER'">>} ->
+        {error, <<"ERR unknown command `CLUSTER`", _/binary>>} ->
             {ok, FailFn(Node)};
         {error, <<"ERR This instance has cluster support disabled">>} ->
             {ok, FailFn(Node)};
