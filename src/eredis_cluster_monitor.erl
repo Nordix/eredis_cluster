@@ -329,8 +329,13 @@ get_cluster_info_from_connection(Connection, Query, FailFn, Node) ->
     try eredis:q(Connection, Query) of
         {ok, ClusterInfo} ->
             {ok, ClusterInfo};
+        %% Redis Sentinel 5 or GCP Memorystore Redis
         {error, <<"ERR unknown command `CLUSTER`", _/binary>>} ->
             {ok, FailFn(Node)};
+        %% Redis Sentinel 6+
+        {error, <<"ERR unknown command 'CLUSTER'", _/binary>>} ->
+            {ok, FailFn(Node)};
+        %% Redis 5+
         {error, <<"ERR This instance has cluster support disabled">>} ->
             {ok, FailFn(Node)};
         OtherError ->
