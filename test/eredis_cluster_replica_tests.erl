@@ -1,5 +1,5 @@
-%% @doc Tests for the read-replica support: parsing of replica-bearing
-%% `CLUSTER SLOTS' replies.
+%% @doc Tests for the read-replica support: topology parsing, the refresh
+%% pool diff and pool naming.
 -module(eredis_cluster_replica_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -92,3 +92,66 @@ multiple_ranges_test() ->
                   [{"127.0.0.1", 30005}],
                   [{"127.0.0.1", 30006}]],
                  [replica_addrports(SM) || SM <- Maps]).
+
+%% =============================================================================
+%% Refresh diff (pools_to_close)
+%% =============================================================================
+
+tnode(Port, Pool) ->
+    #node{address = "127.0.0.1", port = Port, options = [], pool = Pool}.
+
+tsm(Master, Replicas) ->
+    #slots_map{start_slot = 0, end_slot = 16383, index = 1,
+               node = Master, replicas = Replicas}.
+
+close_pools(Old, New, ReplicaReads) ->
+    lists:sort([Pool || {_Id, Pool} <-
+                    eredis_cluster_monitor:pools_to_close(Old, New, ReplicaReads)]).
+
+node_identity_is_role_qualified_test() ->
+    N = tnode(30001, undefined),
+    ?assertNotEqual(eredis_cluster_monitor:node_identity(N, master),
+                    eredis_cluster_monitor:node_identity(N, replica)).
+
+stable_topology_closes_nothing_test() ->
+    Old = [tsm(tnode(30001, m1), [tnode(30004, r1)])],
+    New = [tsm(tnode(30001, undefined), [tnode(30004, undefined)])],
+    ?assertEqual([], close_pools(Old, New, true)).
+
+drops_only_removed_replica_test() ->
+    Old = [tsm(tnode(30001, m1), [tnode(30004, r1), tnode(30005, r2)])],
+    New = [tsm(tnode(30001, undefined), [tnode(30004, undefined)])],
+    ?assertEqual([r2], close_pools(Old, New, true)).
+
+demoted_master_pool_closed_with_replica_reads_off_test() ->
+    %% 30001 was a master (pool m1); the new topology makes it a replica of
+    %% 30002. With replica_reads off, the old master pool must still close.
+    Old = [tsm(tnode(30001, m1), [])],
+    New = [tsm(tnode(30002, undefined), [tnode(30001, undefined)])],
+    ?assertEqual([m1], close_pools(Old, New, false)).
+
+replica_reads_toggled_off_closes_replica_pools_test() ->
+    Old = [tsm(tnode(30001, m1), [tnode(30004, r1)])],
+    New = [tsm(tnode(30001, undefined), [tnode(30004, undefined)])],
+    ?assertEqual([r1], close_pools(Old, New, false)).
+
+promoted_replica_closes_old_replica_pool_test() ->
+    %% 30004 was a replica (pool r1); it is promoted to master in the new map.
+    %% Its old #r pool must close (a fresh master pool is created elsewhere).
+    Old = [tsm(tnode(30001, m1), [tnode(30004, r1)])],
+    New = [tsm(tnode(30004, undefined), [])],
+    ?assertEqual([m1, r1], close_pools(Old, New, true)).
+
+%% =============================================================================
+%% Pool naming
+%% =============================================================================
+
+master_pool_name_is_unsuffixed_test() ->
+    ?assertEqual('127.0.0.1#30001',
+                 eredis_cluster_pool:get_name("127.0.0.1", 30001)),
+    ?assertEqual('127.0.0.1#30001',
+                 eredis_cluster_pool:get_name("127.0.0.1", 30001, master)).
+
+replica_pool_name_is_r_suffixed_test() ->
+    ?assertEqual('127.0.0.1#30001#r',
+                 eredis_cluster_pool:get_name("127.0.0.1", 30001, replica)).

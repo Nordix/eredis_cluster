@@ -40,9 +40,11 @@
 
 %% Specific pools (Redis nodes), default cluster
 -export([get_pool_by_command/1, get_pool_by_key/1, get_all_pools/0]).
+-export([get_all_replica_pools/0, get_replica_pools_by_key/1]).
 
 %% Specific pools (Redis nodes), named cluster
 -export([get_pool_by_command/2, get_pool_by_key/2, get_all_pools/1]).
+-export([get_all_replica_pools/1, get_replica_pools_by_key/2]).
 
 -ifdef(TEST).
 -export([get_key_slot/1]).
@@ -1047,6 +1049,43 @@ get_all_pools() ->
 -spec get_all_pools(Cluster :: atom()) -> [atom()].
 get_all_pools(Cluster) ->
     eredis_cluster_monitor:get_all_pools(Cluster).
+
+%% =============================================================================
+%% @doc Returns the connection pools for all connected replica nodes in the
+%% default cluster.
+%%
+%% Empty unless the cluster was connected with `{replica_reads, true}'. Useful
+%% as a health check that replica reads are actually engaged (an empty list with
+%% the option on means reads silently fall back to masters).
+%% @end
+%% =============================================================================
+-spec get_all_replica_pools() -> [atom()].
+get_all_replica_pools() ->
+    eredis_cluster_monitor:get_all_replica_pools(?default_cluster).
+
+%% @doc Like get_all_replica_pools/0 for a named cluster.
+-spec get_all_replica_pools(Cluster :: atom()) -> [atom()].
+get_all_replica_pools(Cluster) ->
+    eredis_cluster_monitor:get_all_replica_pools(Cluster).
+
+%% =============================================================================
+%% @doc Returns the connected replica pools for the shard that owns `Key' in the
+%% default cluster.
+%%
+%% Empty when replica reads are disabled or the shard has no connected replica.
+%% Useful for diagnostics.
+%% @end
+%% =============================================================================
+-spec get_replica_pools_by_key(Key :: anystring()) -> [atom()].
+get_replica_pools_by_key(Key) ->
+    get_replica_pools_by_key(?default_cluster, Key).
+
+%% @doc Like get_replica_pools_by_key/1 for a named cluster.
+-spec get_replica_pools_by_key(Cluster :: atom(), Key :: anystring()) -> [atom()].
+get_replica_pools_by_key(Cluster, Key) ->
+    Slot = get_key_slot(Key),
+    State = eredis_cluster_monitor:get_state(Cluster),
+    eredis_cluster_monitor:get_replica_pools_by_slot(Slot, State).
 
 %% =============================================================================
 %% @doc Return the hash slot from the key
