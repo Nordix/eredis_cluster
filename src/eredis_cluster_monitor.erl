@@ -20,6 +20,11 @@
 %% Public API (backward compat).
 -export([get_cluster_slots/0, get_cluster_nodes/0]).
 
+-ifdef(TEST).
+%% Exposed for unit tests (see test/eredis_cluster_replica_tests.erl).
+-export([parse_cluster_slots/2]).
+-endif.
+
 %% gen_server.
 -export([init/1]).
 -export([handle_call/3]).
@@ -355,11 +360,16 @@ get_cluster_slots_from_single_node(Node) ->
                           Options::options()) -> [#slots_map{}].
 parse_cluster_slots(ClusterInfo, Options) ->
     SlotsMaps = parse_cluster_slots(ClusterInfo, 1, []),
-    %% Save current options in each new SlotsMaps
-    [SlotsMap#slots_map{node=SlotsMap#slots_map.node#node{options = Options}} ||
-                       SlotsMap <- SlotsMaps].
+    %% Save current options in each new SlotsMaps, on the master node and on
+    %% each replica node (stamped identically; no per-role option divergence).
+    [SlotsMap#slots_map{
+         node     = SlotsMap#slots_map.node#node{options = Options},
+         replicas = [Replica#node{options = Options} ||
+                        Replica <- SlotsMap#slots_map.replicas]
+     } || SlotsMap <- SlotsMaps].
 
-parse_cluster_slots([[StartSlot, EndSlot | [[Address, Port | _] | _]] | T], Index, Acc) ->
+parse_cluster_slots([[StartSlot, EndSlot, [Address, Port | _] | ReplicaEntries] | T],
+                    Index, Acc) ->
     SlotsMap =
         #slots_map{
             index = Index,
@@ -368,11 +378,39 @@ parse_cluster_slots([[StartSlot, EndSlot | [[Address, Port | _] | _]] | T], Inde
             node = #node{
                 address = binary_to_list(Address),
                 port = binary_to_integer(Port)
-            }
+            },
+            replicas = [Replica || Entry <- ReplicaEntries,
+                                   Replica <- replica_node(Entry)]
         },
     parse_cluster_slots(T, Index + 1, [SlotsMap | Acc]);
 parse_cluster_slots([], _Index, Acc) ->
     lists:reverse(Acc).
+
+%% Replica entries are best-effort: an entry with an unusable endpoint or a
+%% shape this client doesn't understand is skipped rather than failing the
+%% whole topology refresh, since the master mapping alone can serve every
+%% request. (Malformed *master* entries still fail the refresh, as before.)
+replica_node([RAddr, RPort | _]) when is_binary(RAddr), is_binary(RPort) ->
+    case valid_endpoint(RAddr) of
+        true ->
+            try
+                [#node{address = binary_to_list(RAddr),
+                       port = binary_to_integer(RPort)}]
+            catch
+                error:badarg -> []
+            end;
+        false ->
+            []
+    end;
+replica_node(_MalformedEntry) ->
+    [].
+
+%% A CLUSTER SLOTS node endpoint may be empty (<<>>, "use the address you
+%% connected to") or unknown (<<"?">>, misconfigured cluster-announce-hostname)
+%% in Redis 7+. We can't open a pool to such a replica, so skip it.
+valid_endpoint(<<>>) -> false;
+valid_endpoint(<<"?">>) -> false;
+valid_endpoint(_) -> true.
 
 %% =============================================================================
 %% @doc Collect options set via application configs or in connect/2
@@ -540,3 +578,19 @@ terminate(_Reason, _State) ->
 %% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% =============================================================================
+%% Tests
+%% =============================================================================
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+single_node_fabricated_mapping_has_no_replicas_test() ->
+    %% The fabricated standalone mapping (used for non-cluster Redis) must
+    %% yield no replicas.
+    Node = #node{address = "127.0.0.1", port = 30001},
+    Fabricated = get_cluster_slots_from_single_node(Node),
+    [SlotsMap] = parse_cluster_slots(Fabricated, []),
+    ?assertEqual([], SlotsMap#slots_map.replicas).
+
+-endif.
