@@ -96,11 +96,64 @@ eredis_cluster:qa(["FLUSHDB"]).
 eredis_cluster:qk(["FLUSHDB"], "TEST").
 ```
 
+### Read from replicas
+
+By default every command, read or write, is routed to the **master** of the
+key's shard. You can opt in to routing reads to **replicas** to spread read load
+off the masters.
+
+Enable it per cluster with the `replica_reads` option (default `false`). When
+enabled, a connection pool is created for each replica node in addition to the
+masters:
+
+```Erlang
+eredis_cluster:connect([{"127.0.0.1", 30001}],
+                       [{replica_reads, true},
+                        {replica_pool_size, 5},          %% defaults to pool_size
+                        {replica_pool_max_overflow, 0}]). %% defaults to pool_max_overflow
+```
+
+Then use `qr`/`qrk`, the read-preference siblings of `q`/`qk`, to route a read
+to a connected replica of the key's shard:
+
+```Erlang
+%% Routed to a replica when one is connected, else the master.
+eredis_cluster:qr(["GET", "foo"]).
+
+%% Replica-routed, explicit key (sibling of qk/2).
+eredis_cluster:qrk(["GET", "foo"], "foo").
+```
+
+Behaviour and caveats:
+
+* **Stale reads.** Replication is asynchronous, so a replica read may return data
+  older than the latest write. This is the contract of replica reads: only use
+  `qr`/`qrk` where slightly stale data is acceptable.
+* **Transparent master fallback.** With `replica_reads` off, or when the shard has
+  no connected replica, `qr`/`qrk` behave exactly like `q`/`qk`. A read that fails
+  on the replica (redirect, syncing replica, connection error) is transparently
+  re-run on the master.
+* **Writes via `qr` still work.** A write (or a plain `EVAL`/`EVALSHA`, which Redis
+  treats as possibly-writing) sent through `qr` is redirected by the replica and
+  re-run on the master. It succeeds, at the cost of an extra hop. Prefer `q` for
+  writes.
+* **Recovery.** A lost replica connection makes reads fall back to the master and
+  triggers a rate-limited topology refresh that re-establishes pools for the
+  replicas still advertised by `CLUSTER SLOTS` (connections themselves also
+  reconnect automatically). A replica that dropped out of the topology entirely
+  is picked up again by the next refresh from any cause (e.g. a redirect or
+  failover).
+* **Introspection / health check.** `get_all_replica_pools/0,1` lists the connected
+  replica pools, and `get_replica_pools_by_key/1,2` the replica pools for a key's
+  shard. An empty list while `replica_reads` is enabled means reads are silently
+  falling back to masters (the library also logs this once per topology refresh).
+
 ### Multi-cluster
 
 If you need to work with multiple Redis clusters in the same application, the
-functions `connect/3`, `disconnect/1`, `q/2`, `qk/3`, `qa/2`, `qa2/2`, `qmn/2`,
-`transaction/3`, `get_pool_by_command/2`, `get_pool_by_key/2`, `get_all_pools/1`
+functions `connect/3`, `disconnect/1`, `q/2`, `qk/3`, `qr/2`, `qrk/3`, `qa/2`,
+`qa2/2`, `qmn/2`, `transaction/3`, `get_pool_by_command/2`, `get_pool_by_key/2`,
+`get_all_pools/1`, `get_all_replica_pools/1`, `get_replica_pools_by_key/2`
 accept a named cluster parameter. Multi-cluster support was added in
 eredis_cluster 0.7.0.
 
@@ -169,6 +222,9 @@ retrieve them through the command `CLUSTER SLOTS` at runtime.
 * `init_nodes`: List of Redis nodes to fetch cluster information from. Default: `[]`
 * `pool_size`: Number of connected clients to each Redis node. Default: `10`
 * `pool_max_overflow`: Max number of extra clients that can be started when the pool is exhausted. Default: `0`
+* `replica_reads`: Create a connection pool for each replica node and let `qr`/`qrk` route reads to replicas. See [Read from replicas](#read-from-replicas). Default: `false`
+* `replica_pool_size`: Number of connected clients to each replica node. Default: the `pool_size` value
+* `replica_pool_max_overflow`: Max number of extra clients to a replica node when its pool is exhausted. Default: the `pool_max_overflow` value
 * `username`: Username for [Redis ACL](https://redis.io/docs/manual/security/acl/) authentication.
    Alternatives are a 0-ary function that returns the username, a string or iodata or the atom `undefined` for no username. Default: `undefined`
 

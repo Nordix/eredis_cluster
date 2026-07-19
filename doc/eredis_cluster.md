@@ -191,16 +191,19 @@ redis_transaction_result() = {ok, [<a href="#type-redis_success_result">redis_su
 
 <table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#connect-1">connect/1</a></td><td>Connect to a Redis cluster using a set of init nodes.</td></tr><tr><td valign="top"><a href="#connect-2">connect/2</a></td><td>Connects to a Redis cluster using a set of init nodes, with options.</td></tr><tr><td valign="top"><a href="#connect-3">connect/3</a></td><td>Connects to a Redis cluster using a set of init nodes, with options and
 cluster name.</td></tr><tr><td valign="top"><a href="#disconnect-1">disconnect/1</a></td><td>Disconnects a cluster by name or a set of nodes in the default cluster.</td></tr><tr><td valign="top"><a href="#eval-4">eval/4</a></td><td>Eval command helper, to optimize the query, it will try to execute the
-script using its hashed value.</td></tr><tr><td valign="top"><a href="#flushdb-0">flushdb/0</a></td><td>Perform flushdb command on each node of the redis cluster.</td></tr><tr><td valign="top"><a href="#get_all_pools-0">get_all_pools/0</a></td><td>Returns the connection pools for all Redis nodes in the default cluster.</td></tr><tr><td valign="top"><a href="#get_all_pools-1">get_all_pools/1</a></td><td>Returns the connection pools for all Redis nodes in a named cluster.</td></tr><tr><td valign="top"><a href="#get_pool_by_command-1">get_pool_by_command/1</a></td><td>Returns the connection pool for the Redis node in the default cluster
+script using its hashed value.</td></tr><tr><td valign="top"><a href="#flushdb-0">flushdb/0</a></td><td>Perform flushdb command on each node of the redis cluster.</td></tr><tr><td valign="top"><a href="#get_all_pools-0">get_all_pools/0</a></td><td>Returns the connection pools for all Redis nodes in the default cluster.</td></tr><tr><td valign="top"><a href="#get_all_pools-1">get_all_pools/1</a></td><td>Returns the connection pools for all Redis nodes in a named cluster.</td></tr><tr><td valign="top"><a href="#get_all_replica_pools-0">get_all_replica_pools/0</a></td><td>Returns the connection pools for all connected replica nodes in the
+default cluster.</td></tr><tr><td valign="top"><a href="#get_all_replica_pools-1">get_all_replica_pools/1</a></td><td>Like get_all_replica_pools/0 for a named cluster.</td></tr><tr><td valign="top"><a href="#get_pool_by_command-1">get_pool_by_command/1</a></td><td>Returns the connection pool for the Redis node in the default cluster
 where a command should be executed.</td></tr><tr><td valign="top"><a href="#get_pool_by_command-2">get_pool_by_command/2</a></td><td>Like get_pool_by_command/1 for a named cluster.</td></tr><tr><td valign="top"><a href="#get_pool_by_key-1">get_pool_by_key/1</a></td><td>Returns the connection pool for the Redis node responsible for the key
-in the default cluster.</td></tr><tr><td valign="top"><a href="#get_pool_by_key-2">get_pool_by_key/2</a></td><td>Like get_pool_by_key/1 for a named cluster.</td></tr><tr><td valign="top"><a href="#load_script-1">load_script/1</a></td><td>Load LUA script to all master nodes in the Redis cluster.</td></tr><tr><td valign="top"><a href="#optimistic_locking_transaction-3">optimistic_locking_transaction/3</a></td><td>Optimistic locking transaction, based on Redis documentation:
+in the default cluster.</td></tr><tr><td valign="top"><a href="#get_pool_by_key-2">get_pool_by_key/2</a></td><td>Like get_pool_by_key/1 for a named cluster.</td></tr><tr><td valign="top"><a href="#get_replica_pools_by_key-1">get_replica_pools_by_key/1</a></td><td>Returns the connected replica pools for the shard that owns <code>Key</code> in the
+default cluster.</td></tr><tr><td valign="top"><a href="#get_replica_pools_by_key-2">get_replica_pools_by_key/2</a></td><td>Like get_replica_pools_by_key/1 for a named cluster.</td></tr><tr><td valign="top"><a href="#load_script-1">load_script/1</a></td><td>Load LUA script to all master nodes in the Redis cluster.</td></tr><tr><td valign="top"><a href="#optimistic_locking_transaction-3">optimistic_locking_transaction/3</a></td><td>Optimistic locking transaction, based on Redis documentation:
 https://redis.io/topics/transactions.</td></tr><tr><td valign="top"><a href="#q-1">q/1</a></td><td>This function executes simple or pipelined command on a single redis
 node, which is selected according to the first key in the command.</td></tr><tr><td valign="top"><a href="#q-2">q/2</a></td><td>Simple or pipelined command on a named cluster.</td></tr><tr><td valign="top"><a href="#q_noreply-1">q_noreply/1</a></td><td>Executes a simple or pipeline of commands on a single Redis node, but
 ignoring any response from Redis.</td></tr><tr><td valign="top"><a href="#qa-1">qa/1</a></td><td>Performs a query on all nodes in the default cluster.</td></tr><tr><td valign="top"><a href="#qa-2">qa/2</a></td><td>Performs a query on all nodes in a cluster.</td></tr><tr><td valign="top"><a href="#qa2-1">qa2/1</a></td><td>Perform a given query on all master nodes of a redis cluster and
 return result with master node reference in result.</td></tr><tr><td valign="top"><a href="#qa2-2">qa2/2</a></td><td>Like qa2/1 but for a named cluster rather than the default cluster.</td></tr><tr><td valign="top"><a href="#qk-2">qk/2</a></td><td>Executes a simple or pipeline of command on the Redis node where the
 provided key resides on the default cluster.</td></tr><tr><td valign="top"><a href="#qk-3">qk/3</a></td><td>Executes a simple or pipeline of command on the Redis node where the
 provided key resides on a named cluster.</td></tr><tr><td valign="top"><a href="#qmn-1">qmn/1</a></td><td>Multi node query.</td></tr><tr><td valign="top"><a href="#qmn-2">qmn/2</a></td><td>Like qmn/1, but for a named cluster rather than the default cluster.</td></tr><tr><td valign="top"><a href="#qn-2">qn/2</a></td><td>
-Execute a simple or pipelined command on a specific node.</td></tr><tr><td valign="top"><a href="#qp-1">qp/1</a></td><td>Executes a pipeline of commands.</td></tr><tr><td valign="top"><a href="#qw-2">qw/2</a></td><td>Function to be used for direct calls to an <code>eredis</code> connection instance
+Execute a simple or pipelined command on a specific node.</td></tr><tr><td valign="top"><a href="#qp-1">qp/1</a></td><td>Executes a pipeline of commands.</td></tr><tr><td valign="top"><a href="#qr-1">qr/1</a></td><td>Like q/1, but routes the command to a connected replica of the key's
+shard when one is available, falling back to the master otherwise.</td></tr><tr><td valign="top"><a href="#qr-2">qr/2</a></td><td>Like qr/1 for a named cluster.</td></tr><tr><td valign="top"><a href="#qrk-2">qrk/2</a></td><td>Like qk/2, but replica-routed (see qr/1).</td></tr><tr><td valign="top"><a href="#qrk-3">qrk/3</a></td><td>Like qk/3, but replica-routed (see qr/1).</td></tr><tr><td valign="top"><a href="#qw-2">qw/2</a></td><td>Function to be used for direct calls to an <code>eredis</code> connection instance
 (a worker) in the function passed to the <code>transaction/2</code> function.</td></tr><tr><td valign="top"><a href="#scan-4">scan/4</a></td><td>Performs a SCAN on a specific node in the Redis cluster.</td></tr><tr><td valign="top"><a href="#start-0">start/0</a></td><td>Start application.</td></tr><tr><td valign="top"><a href="#stop-0">stop/0</a></td><td>Stop application.</td></tr><tr><td valign="top"><a href="#transaction-1">transaction/1</a></td><td>(<em>Deprecated</em>.) Function to execute a pipeline of commands as a transaction command, by
 wrapping it in MULTI and EXEC.</td></tr><tr><td valign="top"><a href="#transaction-2">transaction/2</a></td><td>Execute a function on a single connection in the default cluster.</td></tr><tr><td valign="top"><a href="#transaction-3">transaction/3</a></td><td>Execute a function on a single connection in a named cluster.</td></tr><tr><td valign="top"><a href="#update_hash_field-3">update_hash_field/3</a></td><td>Update the value of a field stored in a hash by applying the function
 passed in the argument.</td></tr><tr><td valign="top"><a href="#update_key-2">update_key/2</a></td><td>Update the value of a key by applying the function passed in the
@@ -346,6 +349,35 @@ get_all_pools(Cluster::atom()) -&gt; [atom()]
 
 Returns the connection pools for all Redis nodes in a named cluster.
 
+<a name="get_all_replica_pools-0"></a>
+
+### get_all_replica_pools/0 ###
+
+<pre><code>
+get_all_replica_pools() -&gt; [atom()]
+</code>
+</pre>
+
+
+Returns the connection pools for all connected replica nodes in the
+default cluster.
+
+Empty unless the cluster was connected with `{replica_reads, true}`. Useful
+as a health check that replica reads are actually engaged (an empty list with
+the option on means reads silently fall back to masters).
+
+<a name="get_all_replica_pools-1"></a>
+
+### get_all_replica_pools/1 ###
+
+<pre><code>
+get_all_replica_pools(Cluster::atom()) -&gt; [atom()]
+</code>
+</pre>
+
+
+Like get_all_replica_pools/0 for a named cluster.
+
 <a name="get_pool_by_command-1"></a>
 
 ### get_pool_by_command/1 ###
@@ -399,6 +431,34 @@ get_pool_by_key(Cluster::atom(), Key::<a href="#type-anystring">anystring()</a>)
 
 
 Like get_pool_by_key/1 for a named cluster.
+
+<a name="get_replica_pools_by_key-1"></a>
+
+### get_replica_pools_by_key/1 ###
+
+<pre><code>
+get_replica_pools_by_key(Key::<a href="#type-anystring">anystring()</a>) -&gt; [atom()]
+</code>
+</pre>
+
+
+Returns the connected replica pools for the shard that owns `Key` in the
+default cluster.
+
+Empty when replica reads are disabled or the shard has no connected replica.
+Useful for diagnostics.
+
+<a name="get_replica_pools_by_key-2"></a>
+
+### get_replica_pools_by_key/2 ###
+
+<pre><code>
+get_replica_pools_by_key(Cluster::atom(), Key::<a href="#type-anystring">anystring()</a>) -&gt; [atom()]
+</code>
+</pre>
+
+
+Like get_replica_pools_by_key/1 for a named cluster.
 
 <a name="load_script-1"></a>
 
@@ -629,6 +689,65 @@ Executes a pipeline of commands.
 This function is identical to `q(Commands)`.
 
 __See also:__ [q/1](#q-1).
+
+<a name="qr-1"></a>
+
+### qr/1 ###
+
+<pre><code>
+qr(Command::<a href="#type-redis_command">redis_command()</a>) -&gt; <a href="#type-redis_result">redis_result()</a>
+</code>
+</pre>
+
+
+Like q/1, but routes the command to a connected replica of the key's
+shard when one is available, falling back to the master otherwise.
+
+This is the read-preference sibling of q/1 (q : qk :: qr : qrk). The caller
+decides which calls are replica-safe; the library does not maintain a
+read-only command table. A write (or a plain EVAL/EVALSHA, which Redis treats
+as possibly-writing) sent through qr still succeeds: the replica answers with
+a redirect and the command is re-run on the master. Reads from a replica may
+return stale data (asynchronous replication).
+
+With `replica_reads` disabled, or when the shard has no connected replica,
+qr/qrk behave exactly like q/qk.
+
+<a name="qr-2"></a>
+
+### qr/2 ###
+
+<pre><code>
+qr(Cluster::atom(), Command::<a href="#type-redis_command">redis_command()</a>) -&gt; <a href="#type-redis_result">redis_result()</a>
+</code>
+</pre>
+
+
+Like qr/1 for a named cluster.
+
+<a name="qrk-2"></a>
+
+### qrk/2 ###
+
+<pre><code>
+qrk(Command::<a href="#type-redis_command">redis_command()</a>, Key::<a href="#type-anystring">anystring()</a>) -&gt; <a href="#type-redis_result">redis_result()</a>
+</code>
+</pre>
+
+
+Like qk/2, but replica-routed (see qr/1).
+
+<a name="qrk-3"></a>
+
+### qrk/3 ###
+
+<pre><code>
+qrk(Cluster::atom(), Command::<a href="#type-redis_command">redis_command()</a>, Key::<a href="#type-anystring">anystring()</a>) -&gt; <a href="#type-redis_result">redis_result()</a>
+</code>
+</pre>
+
+
+Like qk/3, but replica-routed (see qr/1).
 
 <a name="qw-2"></a>
 
