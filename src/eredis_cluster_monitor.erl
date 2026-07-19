@@ -11,9 +11,9 @@
 %% Internal API.
 -export([start_link/1]).
 -export([connect/3, disconnect/2]).
--export([refresh_mapping/2, async_refresh_mapping/2]).
+-export([refresh_mapping/2, async_refresh_mapping/2, async_replica_refresh/2]).
 -export([get_state/1, get_state_version/1]).
--export([get_pool_by_slot/1, get_pool_by_slot/2]).
+-export([get_pool_by_slot/1, get_pool_by_slot/2, get_pool_by_slot/3]).
 -export([get_all_pools/0, get_all_pools/1]).
 -export([get_all_replica_pools/0, get_all_replica_pools/1]).
 -export([get_replica_pools_by_slot/2]).
@@ -26,6 +26,7 @@
 %% Exposed for unit tests (see test/eredis_cluster_replica_tests.erl).
 -export([parse_cluster_slots/2]).
 -export([pools_to_close/3, node_identity/2]).
+-export([select_pool/3]).
 -endif.
 
 %% gen_server.
@@ -45,11 +46,19 @@
     node_options = [] :: options(),
     version      = 0  :: integer(),
     slots_table       :: ets:tid() | undefined,
-    pool_sup          :: pid() | undefined
+    pool_sup          :: pid() | undefined,
+    %% monotonic seconds of the last replica-triggered refresh; undefined
+    %% until one has happened (monotonic time can be negative, so 0 is not a
+    %% usable "never" value)
+    replica_refresh_at :: integer() | undefined
 }).
 
 -define(cluster_state_table(Cluster), Cluster).
 -define(cluster_process(Cluster), Cluster).
+
+%% Minimum seconds between replica-triggered refreshes, so a persistently
+%% unreachable replica cannot turn the per-read fallback into a refresh storm.
+-define(replica_refresh_cooldown, 30).
 
 %% API.
 %% @private
@@ -72,6 +81,15 @@ refresh_mapping(Cluster, Version) ->
 %% @private
 async_refresh_mapping(Cluster, Version) ->
     gen_server:cast(?cluster_process(Cluster), {reload_slots_map, Version}).
+
+%% @private
+%% @doc Request a topology refresh because a replica connection was lost.
+%% Replica pools are only (re)dialed during a refresh and the replica read
+%% path never refreshes on its own, so this is the recovery trigger for
+%% closed or replaced replica pools. Ignored while the cooldown is active.
+-spec async_replica_refresh(Cluster :: atom(), Version :: integer()) -> ok.
+async_replica_refresh(Cluster, Version) ->
+    gen_server:cast(?cluster_process(Cluster), {replica_refresh, Version}).
 
 %% @private
 -spec get_state(Cluster :: atom()) -> #state{}.
@@ -159,6 +177,59 @@ get_pool_by_slot(Slot, State) ->
         _:_ ->
             {undefined, State#state.version}
     end.
+
+%% @private
+%% @doc Pick a pool for a slot honouring a read-routing preference.
+%%
+%% `master' is identical to get_pool_by_slot/2 (the master pool). For
+%% `replica_preferred', a connected replica of the slot's shard is chosen at
+%% random; if the shard has no connected replica (feature off, no replicas, or
+%% all down) it falls back to the master. The returned `Role' tells the caller
+%% whether the pool is a replica (so it must send READONLY) or a master.
+-spec get_pool_by_slot(Slot :: integer(), State :: #state{}, read_mode()) ->
+    {PoolName :: atom() | undefined, Version :: integer(),
+     Role :: master | replica}.
+get_pool_by_slot(Slot, State, master) ->
+    {Pool, Version} = get_pool_by_slot(Slot, State),
+    {Pool, Version, master};
+get_pool_by_slot(Slot, State, replica_preferred) ->
+    try
+        [{_, Index}] = ets:lookup(State#state.slots_table, Slot),
+        SlotsMap = element(Index, State#state.slots_maps),
+        select_pool(SlotsMap, State#state.version, replica_preferred)
+    catch
+        _:_ ->
+            {undefined, State#state.version, master}
+    end.
+
+%% Pure pool selection for a slots_map (no ETS) so it is directly unit-testable.
+-spec select_pool(#slots_map{}, integer(), read_mode()) ->
+          {atom() | undefined, integer(), master | replica}.
+select_pool(SlotsMap, Version, master) ->
+    {master_pool(SlotsMap), Version, master};
+select_pool(SlotsMap, Version, replica_preferred) ->
+    Connected = [R || R <- SlotsMap#slots_map.replicas,
+                      R#node.pool =/= undefined],
+    case Connected of
+        [] ->
+            {master_pool(SlotsMap), Version, master};
+        _ ->
+            Replica = pick_replica(Connected),
+            {Replica#node.pool, Version, replica}
+    end.
+
+master_pool(#slots_map{node = #node{pool = Pool}}) -> Pool;
+master_pool(#slots_map{node = undefined}) -> undefined.
+
+%% Stateless uniform-ish pick over the connected replicas. phash2 over a value
+%% that varies per call (caller pid + monotonic time) spreads load without
+%% mutating the caller's `rand' state or keeping a shared counter.
+pick_replica([Single]) ->
+    Single;
+pick_replica(Replicas) ->
+    N = length(Replicas),
+    Index = 1 + erlang:phash2({self(), erlang:monotonic_time()}, N),
+    lists:nth(Index, Replicas).
 
 %% =============================================================================
 %% @doc Connect to a init node and get the slot distribution of nodes.
@@ -706,7 +777,23 @@ handle_cast({async_init, Cluster}, State) ->
 handle_cast({reload_slots_map, Version}, #state{version = Version} = State) ->
     {noreply, reload_slots_map(State)};
 handle_cast({reload_slots_map, _OldVersion}, State) ->
+    {noreply, State};
+handle_cast({replica_refresh, Version}, #state{version = Version} = State) ->
+    Now = erlang:monotonic_time(second),
+    case replica_refresh_allowed(State#state.replica_refresh_at, Now) of
+        true ->
+            {noreply, reload_slots_map(State#state{replica_refresh_at = Now})};
+        false ->
+            {noreply, State}
+    end;
+handle_cast({replica_refresh, _OldVersion}, State) ->
+    %% Mismatching version. Slots map already reloaded.
     {noreply, State}.
+
+replica_refresh_allowed(undefined, _Now) ->
+    true;
+replica_refresh_allowed(Last, Now) ->
+    Now - Last >= ?replica_refresh_cooldown.
 
 %% @private
 handle_info(_Info, State) ->
@@ -726,8 +813,9 @@ code_change(_OldVsn, State, _Extra) ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
-%% Tests that need internal state live here; everything reachable through the
-%% TEST exports is covered in test/eredis_cluster_replica_tests.erl.
+%% Tests for the replica read-routing helpers that operate on internal state
+%% live here; everything reachable through the TEST exports is covered in
+%% test/eredis_cluster_replica_tests.erl.
 
 single_node_fabricated_mapping_has_no_replicas_test() ->
     %% The fabricated standalone mapping (used for non-cluster Redis) must
@@ -753,5 +841,14 @@ get_replica_pools_by_slot_test() ->
     %% a slot with no mapping yields [] (not a crash).
     ?assertEqual([], get_replica_pools_by_slot(999, State)),
     ets:delete(Tab).
+
+replica_refresh_cooldown_test() ->
+    %% Never refreshed before -> allowed, regardless of the (possibly
+    %% negative) monotonic clock value.
+    ?assert(replica_refresh_allowed(undefined, -576460752)),
+    ?assert(replica_refresh_allowed(undefined, 0)),
+    %% Within the cooldown -> denied; at/after the cooldown -> allowed.
+    ?assertNot(replica_refresh_allowed(100, 100 + ?replica_refresh_cooldown - 1)),
+    ?assert(replica_refresh_allowed(100, 100 + ?replica_refresh_cooldown)).
 
 -endif.
