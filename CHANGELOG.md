@@ -1,6 +1,12 @@
 Change log
 ==========
 
+Unreleased
+----------
+
+* Add opt-in replica reads: `qr`/`qrk` route reads to a replica of the key's shard
+  with transparent master fallback, enabled per cluster with `replica_reads`
+
 0.9.0
 -----
 

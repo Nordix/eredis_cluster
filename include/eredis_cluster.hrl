@@ -27,6 +27,11 @@
 
 -type options() :: [{term(), term()}].
 
+%% Read routing preference for a query. `master' routes to the slot's master
+%% pool; `replica_preferred' routes to a connected replica pool when one
+%% exists, else the master.
+-type read_mode() :: master | replica_preferred.
+
 -record(node, {
     address :: string(),
     port :: integer(),
@@ -38,7 +43,8 @@
     start_slot :: integer(),
     end_slot :: integer(),
     index :: integer(),
-    node :: #node{}
+    node :: #node{} | undefined,                % undefined if the master connect failed
+    replicas = [] :: [#node{}]                  % replica nodes for this slot range
 }).
 
 -define(default_cluster, eredis_cluster_default).

@@ -25,9 +25,15 @@
 -export([q/1, qk/2, q_noreply/1, qp/1, qa/1, qa2/1, qn/2, qw/2, qmn/1]).
 -export([transaction/1, transaction/2]).
 
+%% Replica-routed reads (default cluster)
+-export([qr/1, qrk/2]).
+
 %% Commands to named cluster
 -export([q/2, qk/3, qa/2, qa2/2, qmn/2]).
 -export([transaction/3]).
+
+%% Replica-routed reads (named cluster)
+-export([qr/2, qrk/3]).
 
 %% Specific redis command implementation (default cluster)
 -export([flushdb/0, load_script/1, scan/4]).
@@ -40,16 +46,22 @@
 
 %% Specific pools (Redis nodes), default cluster
 -export([get_pool_by_command/1, get_pool_by_key/1, get_all_pools/0]).
+-export([get_all_replica_pools/0, get_replica_pools_by_key/1]).
 
 %% Specific pools (Redis nodes), named cluster
 -export([get_pool_by_command/2, get_pool_by_key/2, get_all_pools/1]).
+-export([get_all_replica_pools/1, get_replica_pools_by_key/2]).
 
 -ifdef(TEST).
 -export([get_key_slot/1]).
 -export([get_key_from_command/1]).
+-export([strip_readonly_result/2, prepend_readonly/1, replica_outcome/1]).
 -endif.
 
 -include("eredis_cluster.hrl").
+
+%% Maximum replica attempts per qr/qrk call before degrading to the master.
+-define(max_replica_attempts, 2).
 
 %% @doc Start application.
 %%
@@ -188,6 +200,41 @@ qk(Command, Key) ->
           redis_result().
 qk(Cluster, Command, Key) ->
     query(Cluster, Command, Key).
+
+%% =============================================================================
+%% @doc Like q/1, but routes the command to a connected replica of the key's
+%% shard when one is available, falling back to the master otherwise.
+%%
+%% This is the read-preference sibling of q/1 (q : qk :: qr : qrk). The caller
+%% decides which calls are replica-safe; the library does not maintain a
+%% read-only command table. A write (or a plain EVAL/EVALSHA, which Redis treats
+%% as possibly-writing) sent through qr still succeeds: the replica answers with
+%% a redirect and the command is re-run on the master. Reads from a replica may
+%% return stale data (asynchronous replication).
+%%
+%% With `replica_reads' disabled, or when the shard has no connected replica,
+%% qr/qrk behave exactly like q/qk.
+%% @end
+%% =============================================================================
+-spec qr(Command :: redis_command()) -> redis_result().
+qr(Command) ->
+    query_replica(?default_cluster, Command, get_key_from_command(Command)).
+
+%% @doc Like qr/1 for a named cluster.
+-spec qr(Cluster :: atom(), Command :: redis_command()) -> redis_result().
+qr(Cluster, Command) ->
+    query_replica(Cluster, Command, get_key_from_command(Command)).
+
+%% @doc Like qk/2, but replica-routed (see qr/1).
+-spec qrk(Command :: redis_command(), Key :: anystring()) -> redis_result().
+qrk(Command, Key) ->
+    query_replica(?default_cluster, Command, Key).
+
+%% @doc Like qk/3, but replica-routed (see qr/1).
+-spec qrk(Cluster :: atom(), Command :: redis_command(), Key :: anystring()) ->
+          redis_result().
+qrk(Cluster, Command, Key) ->
+    query_replica(Cluster, Command, Key).
 
 %% =============================================================================
 %% @doc Executes a simple or pipeline of commands on a single Redis node, but
@@ -629,6 +676,151 @@ query(Cluster, Command, PoolKey, Counter) ->
         Result -> Result
     end.
 
+%% =============================================================================
+%% Replica-routed read path (qr/qrk).
+%%
+%% Selects a connected replica for the key's shard and sends the command with a
+%% one-shot leading READONLY (a replica rejects data commands otherwise). On any
+%% replica-side condition that isn't a clean reply -- a redirect (write/EVAL/
+%% stale replica), LOADING/MASTERDOWN/CLUSTERDOWN, a rejected READONLY, or a
+%% connection error -- the read degrades to the ordinary master path (query/3),
+%% which owns the proven refresh/redirect/retry machinery. Crucially, degrading
+%% routes the command straight to the *master* for the slot, so a misrouted
+%% write neither loops nor triggers a topology refresh.
+%%
+%% At most two replica attempts are made (a second re-picks among the connected
+%% replicas) before falling back to the master. A lost replica connection also
+%% asks the monitor for a rate-limited topology refresh, so replica pools whose
+%% node is still advertised by CLUSTER SLOTS are re-established.
+%% =============================================================================
+query_replica(_Cluster, _Command, undefined) ->
+    {error, invalid_cluster_command};
+query_replica(Cluster, Command, PoolKey) ->
+    Slot = get_key_slot(PoolKey),
+    State = eredis_cluster_monitor:get_state(Cluster),
+    case eredis_cluster_monitor:get_pool_by_slot(Slot, State, replica_preferred) of
+        {_Pool, _Version, master} ->
+            %% No connected replica for this shard; behave exactly like q/qk.
+            query(Cluster, Command, PoolKey);
+        {Pool, Version, replica} ->
+            try_replica(Cluster, Command, PoolKey, Pool, Version, 1)
+    end.
+
+try_replica(Cluster, Command, PoolKey, Pool, Version, Attempt) ->
+    Result = execute_replica(Pool, Command),
+    case replica_outcome(Result) of
+        ok ->
+            Result;
+        fallback_master ->
+            %% Routing-by-design (redirect), syncing replica, or rejected
+            %% READONLY: run on the master. No refresh; the master serves it.
+            maybe_replica_refresh(Cluster, Version, Result),
+            query(Cluster, Command, PoolKey);
+        retry_replica when Attempt >= ?max_replica_attempts ->
+            query(Cluster, Command, PoolKey);
+        retry_replica ->
+            throttle_retries(Attempt),
+            Slot = get_key_slot(PoolKey),
+            State = eredis_cluster_monitor:get_state(Cluster),
+            case eredis_cluster_monitor:get_pool_by_slot(Slot, State, replica_preferred) of
+                {NextPool, NextVersion, replica} ->
+                    try_replica(Cluster, Command, PoolKey, NextPool, NextVersion,
+                                Attempt + 1);
+                {_P, _V, master} ->
+                    query(Cluster, Command, PoolKey)
+            end
+    end.
+
+%% A dead replica connection (pool closed or node unreachable) cannot recover
+%% without a topology refresh, since replica pools are only dialed at refresh
+%% time. Redirects and replica sync states are deliberately excluded: the
+%% master serves those without any refresh. The monitor rate-limits these
+%% requests, so a persistently lost replica cannot cause a refresh storm. A
+%% replica that dropped out of CLUSTER SLOTS entirely produces no further
+%% trigger once its pool is gone; it is rediscovered by whatever refresh
+%% comes next (a redirect or a failover).
+maybe_replica_refresh(Cluster, Version, {error, no_connection}) ->
+    eredis_cluster_monitor:async_replica_refresh(Cluster, Version);
+maybe_replica_refresh(_Cluster, _Version, _Result) ->
+    ok.
+
+%% Run a command on a replica connection, prefixed with a single READONLY whose
+%% reply is stripped. Strip happens before any redirect handling so callers and
+%% the master fallback always see the undecorated command/result.
+execute_replica(Pool, Command) ->
+    Pipeline = prepend_readonly(Command),
+    Raw = eredis_cluster_pool:transaction(Pool, fun(W) -> qw(W, Pipeline) end),
+    strip_readonly_result(Command, Raw).
+
+%% Wrap the command as a pipeline with a leading READONLY (one prepend, not one
+%% per command as with ASKING; READONLY is connection-level, not per-command).
+prepend_readonly(Command) ->
+    [[<<"READONLY">>] | as_pipeline(Command)].
+
+as_pipeline([[X | _] | _] = Pipeline) when is_list(X); is_binary(X) ->
+    Pipeline;
+as_pipeline(SimpleCommand) ->
+    [SimpleCommand].
+
+%% Strip the leading READONLY reply. A simple command unwraps back to a simple
+%% result; a pipeline keeps its (post-READONLY) list. A non-OK leading reply
+%% means the replica rejected READONLY -> surface a retryable error so the read
+%% falls back to the master. Transport errors (non-list) pass through unchanged.
+strip_readonly_result(Command, Results) when is_list(Results) ->
+    case Results of
+        [{ok, <<"OK">>} | Rest] ->
+            case is_pipeline(Command) of
+                true ->
+                    Rest;
+                false ->
+                    case Rest of
+                        [Single] -> Single;
+                        _        -> {error, redirect_failed}
+                    end
+            end;
+        [ReadonlyError | _] ->
+            {error, {readonly_rejected, ReadonlyError}};
+        [] ->
+            {error, redirect_failed}
+    end;
+strip_readonly_result(_Command, Other) ->
+    %% e.g. {error, no_connection} | {error, pool_busy}
+    Other.
+
+is_pipeline([[X | _] | _]) when is_list(X); is_binary(X) -> true;
+is_pipeline(_) -> false.
+
+%% Classify a (stripped) replica result: clean reply, degrade to master, or try
+%% another replica. A genuine Redis error reply (e.g. WRONGTYPE) is `ok' -- it
+%% is the real answer and must reach the caller. A pipeline result is
+%% classified per element, so a pipeline that was (partially) redirected or hit
+%% a syncing replica is re-run on the master rather than leaking MOVED/LOADING
+%% errors to the caller; the master path then handles any residual redirects.
+replica_outcome(Results) when is_list(Results) ->
+    Outcomes = [replica_outcome(Result) || Result <- Results],
+    case lists:member(fallback_master, Outcomes) of
+        true ->
+            fallback_master;
+        false ->
+            case lists:member(retry_replica, Outcomes) of
+                true  -> retry_replica;
+                false -> ok
+            end
+    end;
+replica_outcome({error, {readonly_rejected, _}})        -> fallback_master;
+replica_outcome({error, <<"MOVED ", _/binary>>})        -> fallback_master;
+replica_outcome({error, <<"ASK ", _/binary>>})          -> fallback_master;
+replica_outcome({error, <<"LOADING ", _/binary>>})      -> fallback_master;
+replica_outcome({error, <<"MASTERDOWN ", _/binary>>})   -> fallback_master;
+replica_outcome({error, <<"CLUSTERDOWN ", _/binary>>})  -> fallback_master;
+replica_outcome({error, <<"TRYAGAIN ", _/binary>>})     -> retry_replica;
+replica_outcome({error, no_connection})                 -> fallback_master;
+replica_outcome({error, tcp_closed})                    -> retry_replica;
+replica_outcome({error, pool_busy})                     -> retry_replica;
+replica_outcome({error, redirect_failed})               -> fallback_master;
+replica_outcome({error, Reason}) when is_atom(Reason)   -> fallback_master;
+replica_outcome(_Payload)                               -> ok.
+
 %% Inspects a result for ASK and MOVED redirects and, if possible,
 %% follows the redirect. If a MOVED redirect is followed, a refresh
 %% mapping is started in the background. If no redirect is followed,
@@ -1047,6 +1239,43 @@ get_all_pools() ->
 -spec get_all_pools(Cluster :: atom()) -> [atom()].
 get_all_pools(Cluster) ->
     eredis_cluster_monitor:get_all_pools(Cluster).
+
+%% =============================================================================
+%% @doc Returns the connection pools for all connected replica nodes in the
+%% default cluster.
+%%
+%% Empty unless the cluster was connected with `{replica_reads, true}'. Useful
+%% as a health check that replica reads are actually engaged (an empty list with
+%% the option on means reads silently fall back to masters).
+%% @end
+%% =============================================================================
+-spec get_all_replica_pools() -> [atom()].
+get_all_replica_pools() ->
+    eredis_cluster_monitor:get_all_replica_pools(?default_cluster).
+
+%% @doc Like get_all_replica_pools/0 for a named cluster.
+-spec get_all_replica_pools(Cluster :: atom()) -> [atom()].
+get_all_replica_pools(Cluster) ->
+    eredis_cluster_monitor:get_all_replica_pools(Cluster).
+
+%% =============================================================================
+%% @doc Returns the connected replica pools for the shard that owns `Key' in the
+%% default cluster.
+%%
+%% Empty when replica reads are disabled or the shard has no connected replica.
+%% Useful for diagnostics.
+%% @end
+%% =============================================================================
+-spec get_replica_pools_by_key(Key :: anystring()) -> [atom()].
+get_replica_pools_by_key(Key) ->
+    get_replica_pools_by_key(?default_cluster, Key).
+
+%% @doc Like get_replica_pools_by_key/1 for a named cluster.
+-spec get_replica_pools_by_key(Cluster :: atom(), Key :: anystring()) -> [atom()].
+get_replica_pools_by_key(Cluster, Key) ->
+    Slot = get_key_slot(Key),
+    State = eredis_cluster_monitor:get_state(Cluster),
+    eredis_cluster_monitor:get_replica_pools_by_slot(Slot, State).
 
 %% =============================================================================
 %% @doc Return the hash slot from the key

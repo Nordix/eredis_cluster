@@ -11,14 +11,23 @@
 %% Internal API.
 -export([start_link/1]).
 -export([connect/3, disconnect/2]).
--export([refresh_mapping/2, async_refresh_mapping/2]).
+-export([refresh_mapping/2, async_refresh_mapping/2, async_replica_refresh/2]).
 -export([get_state/1, get_state_version/1]).
--export([get_pool_by_slot/1, get_pool_by_slot/2]).
+-export([get_pool_by_slot/1, get_pool_by_slot/2, get_pool_by_slot/3]).
 -export([get_all_pools/0, get_all_pools/1]).
+-export([get_all_replica_pools/0, get_all_replica_pools/1]).
+-export([get_replica_pools_by_slot/2]).
 -export([get_cluster_slots/1, get_cluster_nodes/1]).
 
 %% Public API (backward compat).
 -export([get_cluster_slots/0, get_cluster_nodes/0]).
+
+-ifdef(TEST).
+%% Exposed for unit tests (see test/eredis_cluster_replica_tests.erl).
+-export([parse_cluster_slots/2]).
+-export([pools_to_close/3, node_identity/2]).
+-export([select_pool/3]).
+-endif.
 
 %% gen_server.
 -export([init/1]).
@@ -37,11 +46,19 @@
     node_options = [] :: options(),
     version      = 0  :: integer(),
     slots_table       :: ets:tid() | undefined,
-    pool_sup          :: pid() | undefined
+    pool_sup          :: pid() | undefined,
+    %% monotonic seconds of the last replica-triggered refresh; undefined
+    %% until one has happened (monotonic time can be negative, so 0 is not a
+    %% usable "never" value)
+    replica_refresh_at :: integer() | undefined
 }).
 
 -define(cluster_state_table(Cluster), Cluster).
 -define(cluster_process(Cluster), Cluster).
+
+%% Minimum seconds between replica-triggered refreshes, so a persistently
+%% unreachable replica cannot turn the per-read fallback into a refresh storm.
+-define(replica_refresh_cooldown, 30).
 
 %% API.
 %% @private
@@ -64,6 +81,15 @@ refresh_mapping(Cluster, Version) ->
 %% @private
 async_refresh_mapping(Cluster, Version) ->
     gen_server:cast(?cluster_process(Cluster), {reload_slots_map, Version}).
+
+%% @private
+%% @doc Request a topology refresh because a replica connection was lost.
+%% Replica pools are only (re)dialed during a refresh and the replica read
+%% path never refreshes on its own, so this is the recovery trigger for
+%% closed or replaced replica pools. Ignored while the cooldown is active.
+-spec async_replica_refresh(Cluster :: atom(), Version :: integer()) -> ok.
+async_replica_refresh(Cluster, Version) ->
+    gen_server:cast(?cluster_process(Cluster), {replica_refresh, Version}).
 
 %% @private
 -spec get_state(Cluster :: atom()) -> #state{}.
@@ -92,6 +118,36 @@ get_all_pools(#state{slots_maps = SlotsMaps}) ->
     SlotsMapList = tuple_to_list(SlotsMaps),
     lists:usort([SlotsMap#slots_map.node#node.pool || SlotsMap <- SlotsMapList,
                     SlotsMap#slots_map.node =/= undefined]).
+
+%% @private
+%% @doc Connected replica pools across the cluster (empty unless replica_reads).
+-spec get_all_replica_pools() -> [atom()].
+get_all_replica_pools() ->
+    get_all_replica_pools(?default_cluster).
+
+%% @private
+-spec get_all_replica_pools(atom() | #state{}) -> [atom()].
+get_all_replica_pools(Cluster) when is_atom(Cluster) ->
+    get_all_replica_pools(get_state(Cluster));
+get_all_replica_pools(#state{slots_maps = SlotsMaps}) ->
+    lists:usort([Replica#node.pool
+                 || SlotsMap <- tuple_to_list(SlotsMaps),
+                    Replica <- SlotsMap#slots_map.replicas,
+                    Replica#node.pool =/= undefined]).
+
+%% @private
+%% @doc Connected replica pools for the shard owning a given slot ([] on miss).
+-spec get_replica_pools_by_slot(Slot :: integer(), State :: #state{}) -> [atom()].
+get_replica_pools_by_slot(Slot, State) ->
+    try
+        [{_, Index}] = ets:lookup(State#state.slots_table, Slot),
+        SlotsMap = element(Index, State#state.slots_maps),
+        [Replica#node.pool || Replica <- SlotsMap#slots_map.replicas,
+                              Replica#node.pool =/= undefined]
+    catch
+        _:_ ->
+            []
+    end.
 
 %% =============================================================================
 %% @private
@@ -122,6 +178,59 @@ get_pool_by_slot(Slot, State) ->
             {undefined, State#state.version}
     end.
 
+%% @private
+%% @doc Pick a pool for a slot honouring a read-routing preference.
+%%
+%% `master' is identical to get_pool_by_slot/2 (the master pool). For
+%% `replica_preferred', a connected replica of the slot's shard is chosen at
+%% random; if the shard has no connected replica (feature off, no replicas, or
+%% all down) it falls back to the master. The returned `Role' tells the caller
+%% whether the pool is a replica (so it must send READONLY) or a master.
+-spec get_pool_by_slot(Slot :: integer(), State :: #state{}, read_mode()) ->
+    {PoolName :: atom() | undefined, Version :: integer(),
+     Role :: master | replica}.
+get_pool_by_slot(Slot, State, master) ->
+    {Pool, Version} = get_pool_by_slot(Slot, State),
+    {Pool, Version, master};
+get_pool_by_slot(Slot, State, replica_preferred) ->
+    try
+        [{_, Index}] = ets:lookup(State#state.slots_table, Slot),
+        SlotsMap = element(Index, State#state.slots_maps),
+        select_pool(SlotsMap, State#state.version, replica_preferred)
+    catch
+        _:_ ->
+            {undefined, State#state.version, master}
+    end.
+
+%% Pure pool selection for a slots_map (no ETS) so it is directly unit-testable.
+-spec select_pool(#slots_map{}, integer(), read_mode()) ->
+          {atom() | undefined, integer(), master | replica}.
+select_pool(SlotsMap, Version, master) ->
+    {master_pool(SlotsMap), Version, master};
+select_pool(SlotsMap, Version, replica_preferred) ->
+    Connected = [R || R <- SlotsMap#slots_map.replicas,
+                      R#node.pool =/= undefined],
+    case Connected of
+        [] ->
+            {master_pool(SlotsMap), Version, master};
+        _ ->
+            Replica = pick_replica(Connected),
+            {Replica#node.pool, Version, replica}
+    end.
+
+master_pool(#slots_map{node = #node{pool = Pool}}) -> Pool;
+master_pool(#slots_map{node = undefined}) -> undefined.
+
+%% Stateless uniform-ish pick over the connected replicas. phash2 over a value
+%% that varies per call (caller pid + monotonic time) spreads load without
+%% mutating the caller's `rand' state or keeping a shared counter.
+pick_replica([Single]) ->
+    Single;
+pick_replica(Replicas) ->
+    N = length(Replicas),
+    Index = 1 + erlang:phash2({self(), erlang:monotonic_time()}, N),
+    lists:nth(Index, Replicas).
+
 %% =============================================================================
 %% @doc Connect to a init node and get the slot distribution of nodes.
 %% @end
@@ -131,25 +240,23 @@ reload_slots_map(State) ->
     OldSlotsMaps = tuple_to_list(State#state.slots_maps),
 
     Options = get_current_options(State),
+    ReplicaReads = proplists:get_value(replica_reads, Options, false),
     ClusterSlots = get_cluster_slots(State, Options),
     NewSlotsMaps = parse_cluster_slots(ClusterSlots, Options),
-    %% Find old slots_maps with nodes still in use.
-    CommonInOldMap = lists:flatmap(
-                       fun(#slots_map{node = Node} = OldElem) ->
-                               [OldElem || Elem <- NewSlotsMaps,
-                                           Elem#slots_map.node#node.address == Node#node.address,
-                                           Elem#slots_map.node#node.port    == Node#node.port,
-                                           Elem#slots_map.node#node.options == Node#node.options]
-                       end, OldSlotsMaps),
-
-    %% Disconnect non-used nodes
-    RemovedFromOldMap = remove_list_elements(OldSlotsMaps, CommonInOldMap),
     PoolSup = State#state.pool_sup,
-    [close_connection(PoolSup, SlotsMap) || SlotsMap <- RemovedFromOldMap],
 
-    %% Connect to new nodes
-    ConnectedSlotsMaps = connect_all_slots(State#state.pool_sup, NewSlotsMaps),
+    %% Close pools of nodes (master or replica) that are no longer in the new
+    %% topology, or whose role/options changed. Identity is
+    %% {address, port, options, role}, so a node that flips master<->replica
+    %% closes its old role-named pool and gets a fresh one of the new role.
+    %% Survivors are reused: connect_all_slots is idempotent on a live pool name.
+    [stop_pool(PoolSup, Pool)
+     || {_Id, Pool} <- pools_to_close(OldSlotsMaps, NewSlotsMaps, ReplicaReads)],
+
+    %% Connect to new nodes (masters always; replicas only when replica_reads).
+    ConnectedSlotsMaps = connect_all_slots(PoolSup, NewSlotsMaps, Options),
     create_slots_cache(State#state.slots_table, ConnectedSlotsMaps),
+    maybe_warn_no_replicas(ReplicaReads, ConnectedSlotsMaps),
     NewState = State#state{
         slots_maps = list_to_tuple(ConnectedSlotsMaps),
         version = State#state.version + 1
@@ -160,16 +267,6 @@ reload_slots_map(State) ->
                       [{cluster_state, NewState}]),
 
     NewState.
-
-%% =============================================================================
-%% @doc Removes all elements (including duplicates) of Ys from Xs.
-%% Xs and Ys can be unordered and contain duplicates.
-%% @end
-%% =============================================================================
--spec remove_list_elements(Xs::[term()], Ys::[term()]) -> [term()].
-remove_list_elements(Xs, Ys) ->
-    Set = gb_sets:from_list(Ys),
-    [E || E <- Xs, not gb_sets:is_element(E, Set)].
 
 %% =============================================================================
 %% @doc Get cluster slots information.
@@ -355,11 +452,16 @@ get_cluster_slots_from_single_node(Node) ->
                           Options::options()) -> [#slots_map{}].
 parse_cluster_slots(ClusterInfo, Options) ->
     SlotsMaps = parse_cluster_slots(ClusterInfo, 1, []),
-    %% Save current options in each new SlotsMaps
-    [SlotsMap#slots_map{node=SlotsMap#slots_map.node#node{options = Options}} ||
-                       SlotsMap <- SlotsMaps].
+    %% Save current options in each new SlotsMaps, on the master node and on
+    %% each replica node (stamped identically; no per-role option divergence).
+    [SlotsMap#slots_map{
+         node     = SlotsMap#slots_map.node#node{options = Options},
+         replicas = [Replica#node{options = Options} ||
+                        Replica <- SlotsMap#slots_map.replicas]
+     } || SlotsMap <- SlotsMaps].
 
-parse_cluster_slots([[StartSlot, EndSlot | [[Address, Port | _] | _]] | T], Index, Acc) ->
+parse_cluster_slots([[StartSlot, EndSlot, [Address, Port | _] | ReplicaEntries] | T],
+                    Index, Acc) ->
     SlotsMap =
         #slots_map{
             index = Index,
@@ -368,11 +470,39 @@ parse_cluster_slots([[StartSlot, EndSlot | [[Address, Port | _] | _]] | T], Inde
             node = #node{
                 address = binary_to_list(Address),
                 port = binary_to_integer(Port)
-            }
+            },
+            replicas = [Replica || Entry <- ReplicaEntries,
+                                   Replica <- replica_node(Entry)]
         },
     parse_cluster_slots(T, Index + 1, [SlotsMap | Acc]);
 parse_cluster_slots([], _Index, Acc) ->
     lists:reverse(Acc).
+
+%% Replica entries are best-effort: an entry with an unusable endpoint or a
+%% shape this client doesn't understand is skipped rather than failing the
+%% whole topology refresh, since the master mapping alone can serve every
+%% request. (Malformed *master* entries still fail the refresh, as before.)
+replica_node([RAddr, RPort | _]) when is_binary(RAddr), is_binary(RPort) ->
+    case valid_endpoint(RAddr) of
+        true ->
+            try
+                [#node{address = binary_to_list(RAddr),
+                       port = binary_to_integer(RPort)}]
+            catch
+                error:badarg -> []
+            end;
+        false ->
+            []
+    end;
+replica_node(_MalformedEntry) ->
+    [].
+
+%% A CLUSTER SLOTS node endpoint may be empty (<<>>, "use the address you
+%% connected to") or unknown (<<"?">>, misconfigured cluster-announce-hostname)
+%% in Redis 7+. We can't open a pool to such a replica, so skip it.
+valid_endpoint(<<>>) -> false;
+valid_endpoint(<<"?">>) -> false;
+valid_endpoint(_) -> true.
 
 %% =============================================================================
 %% @doc Collect options set via application configs or in connect/2
@@ -392,15 +522,32 @@ get_current_options(State) ->
 %%%------------------------------------------------------------
 close_connection_with_nodes(PoolSup, SlotsMaps, Pools) ->
     lists:foldl(fun(Map, AccMap) ->
-                        case lists:member(Map#slots_map.node#node.pool,
-                                          Pools) of
+                        MasterPool = master_pool_name(Map#slots_map.node),
+                        case lists:member(MasterPool, Pools) of
                             true ->
+                                %% Disconnecting a master pool drops the whole
+                                %% slot map (historical behaviour); also stop any
+                                %% replica pools it held so they don't orphan.
                                 close_connection(PoolSup, Map),
+                                [stop_pool(PoolSup, R#node.pool)
+                                 || R <- Map#slots_map.replicas,
+                                    R#node.pool =/= undefined],
                                 AccMap;
                             false ->
-                                [Map|AccMap]
+                                %% Otherwise just prune any replica pools named,
+                                %% keeping the slot map intact.
+                                {Keep, Drop} =
+                                    lists:partition(
+                                      fun(R) ->
+                                              not lists:member(R#node.pool, Pools)
+                                      end, Map#slots_map.replicas),
+                                [stop_pool(PoolSup, R#node.pool) || R <- Drop],
+                                [Map#slots_map{replicas = Keep} | AccMap]
                         end
                 end, [], SlotsMaps).
+
+master_pool_name(undefined) -> undefined;
+master_pool_name(#node{pool = Pool}) -> Pool.
 
 -spec close_connection(pid(), #slots_map{}) -> ok.
 close_connection(PoolSup, SlotsMap) ->
@@ -418,16 +565,106 @@ close_connection(PoolSup, SlotsMap) ->
             ok
     end.
 
--spec connect_node(pid(), #node{}) -> #node{} | undefined.
+-spec connect_node(pid(), #node{} | undefined) -> #node{} | undefined.
+connect_node(_PoolSup, undefined) ->
+    undefined;
 connect_node(PoolSup, Node) ->
     case eredis_cluster_pool:create(PoolSup,
                                     Node#node.address,
                                     Node#node.port,
-                                    Node#node.options) of
+                                    Node#node.options,
+                                    master) of
         {ok, Pool} ->
             Node#node{pool=Pool};
         _ ->
             undefined
+    end.
+
+%% Connect a replica node into a `#r' role pool. Unlike connect_node/2 a failed
+%% connect returns the node with pool = undefined (not the atom undefined), so
+%% the replicas list keeps its [#node{}] shape and selection can filter on it.
+-spec connect_replica_node(pid(), #node{}) -> #node{}.
+connect_replica_node(PoolSup, Node) ->
+    case eredis_cluster_pool:create(PoolSup,
+                                    Node#node.address,
+                                    Node#node.port,
+                                    Node#node.options,
+                                    replica) of
+        {ok, Pool} ->
+            Node#node{pool = Pool};
+        _ ->
+            Node#node{pool = undefined}
+    end.
+
+%% Safely stop a pool by name (no-op for an undefined or already-gone pool).
+-spec stop_pool(pid(), atom() | undefined) -> ok.
+stop_pool(_PoolSup, undefined) ->
+    ok;
+stop_pool(PoolSup, Pool) ->
+    try eredis_cluster_pool:stop(PoolSup, Pool) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
+
+%% Identity used to diff old vs new topology. Role-qualified so a node that
+%% changes role is treated as a different pool.
+-spec node_identity(#node{}, master | replica) ->
+          {string(), integer(), options() | undefined, master | replica}.
+node_identity(#node{address = A, port = P, options = O}, Role) ->
+    {A, P, O, Role}.
+
+%% The {Identity, Pool} of every old node (master + replica) that holds a pool
+%% whose identity is absent from the new topology's connect-set, i.e. the pools
+%% to stop on refresh.
+-spec pools_to_close([#slots_map{}], [#slots_map{}], boolean()) ->
+          [{tuple(), atom()}].
+pools_to_close(OldSlotsMaps, NewSlotsMaps, ReplicaReads) ->
+    NewSet = new_connect_identities(NewSlotsMaps, ReplicaReads),
+    [{Id, Pool} || {Id, Pool} <- old_connected_pools(OldSlotsMaps),
+                   not sets:is_element(Id, NewSet)].
+
+%% Identities that WILL be connected in the new topology: masters always,
+%% replicas only when replica_reads is enabled.
+new_connect_identities(NewSlotsMaps, ReplicaReads) ->
+    Masters = [node_identity(N, master)
+               || #slots_map{node = N} <- NewSlotsMaps, N =/= undefined],
+    Replicas = case ReplicaReads of
+                   true ->
+                       [node_identity(R, replica)
+                        || #slots_map{replicas = Rs} <- NewSlotsMaps, R <- Rs];
+                   false ->
+                       []
+               end,
+    sets:from_list(Masters ++ Replicas).
+
+%% {Identity, Pool} of every old node that currently holds a pool.
+old_connected_pools(OldSlotsMaps) ->
+    lists:flatmap(
+      fun(#slots_map{node = Node, replicas = Replicas}) ->
+              master_pool_entry(Node) ++
+                  [{node_identity(R, replica), R#node.pool}
+                   || R <- Replicas, R#node.pool =/= undefined]
+      end, OldSlotsMaps).
+
+master_pool_entry(undefined) -> [];
+master_pool_entry(#node{pool = undefined}) -> [];
+master_pool_entry(#node{} = Node) -> [{node_identity(Node, master), Node#node.pool}].
+
+%% Log once per refresh when replica reads are on but no replica pool connected.
+maybe_warn_no_replicas(false, _SlotsMaps) ->
+    ok;
+maybe_warn_no_replicas(true, SlotsMaps) ->
+    case lists:any(fun(#slots_map{replicas = Rs}) ->
+                           lists:any(fun(#node{pool = P}) -> P =/= undefined end, Rs)
+                   end, SlotsMaps) of
+        true ->
+            ok;
+        false ->
+            logger:warning("eredis_cluster: replica_reads enabled but no "
+                           "replica pools connected; reads will fall back "
+                           "to masters"),
+            ok
     end.
 
 safe_eredis_start_link(Address, Port, Options) ->
@@ -445,11 +682,23 @@ create_slots_cache(SlotsTable, SlotsMaps) ->
   SlotsCacheF = lists:flatten(SlotsCache),
   ets:insert(SlotsTable, SlotsCacheF).
 
--spec connect_all_slots(pid(), [#slots_map{}]) -> [#slots_map{}].
-connect_all_slots(PoolSup, SlotsMapList) ->
-    [SlotsMap#slots_map{node = connect_node(PoolSup,
-                                            SlotsMap#slots_map.node)} ||
-        SlotsMap <- SlotsMapList].
+-spec connect_all_slots(pid(), [#slots_map{}], options()) -> [#slots_map{}].
+connect_all_slots(PoolSup, SlotsMapList, Options) ->
+    ReplicaReads = proplists:get_value(replica_reads, Options, false),
+    [connect_slots_map(PoolSup, SlotsMap, ReplicaReads) || SlotsMap <- SlotsMapList].
+
+connect_slots_map(PoolSup, SlotsMap, ReplicaReads) ->
+    Master = connect_node(PoolSup, SlotsMap#slots_map.node),
+    Replicas =
+        case ReplicaReads of
+            true ->
+                [connect_replica_node(PoolSup, R) || R <- SlotsMap#slots_map.replicas];
+            false ->
+                %% Leave replicas unconnected (pool = undefined) when the
+                %% feature is off: stored, never dialed.
+                SlotsMap#slots_map.replicas
+        end,
+    SlotsMap#slots_map{node = Master, replicas = Replicas}.
 
 -spec connect_([{Address :: string(), Port :: integer()}],
                Options :: options(), State :: #state{}) -> #state{}.
@@ -472,7 +721,8 @@ disconnect_(PoolNodes, State) ->
     Cluster = this_cluster(),
 
     NewSlotsMaps = close_connection_with_nodes(PoolSup, SlotsMaps, PoolNodes),
-    ConnectedSlotsMaps = connect_all_slots(PoolSup, NewSlotsMaps),
+    ConnectedSlotsMaps = connect_all_slots(PoolSup, NewSlotsMaps,
+                                           get_current_options(State)),
     create_slots_cache(State#state.slots_table, ConnectedSlotsMaps),
 
     NewState = State#state{
@@ -527,7 +777,23 @@ handle_cast({async_init, Cluster}, State) ->
 handle_cast({reload_slots_map, Version}, #state{version = Version} = State) ->
     {noreply, reload_slots_map(State)};
 handle_cast({reload_slots_map, _OldVersion}, State) ->
+    {noreply, State};
+handle_cast({replica_refresh, Version}, #state{version = Version} = State) ->
+    Now = erlang:monotonic_time(second),
+    case replica_refresh_allowed(State#state.replica_refresh_at, Now) of
+        true ->
+            {noreply, reload_slots_map(State#state{replica_refresh_at = Now})};
+        false ->
+            {noreply, State}
+    end;
+handle_cast({replica_refresh, _OldVersion}, State) ->
+    %% Mismatching version. Slots map already reloaded.
     {noreply, State}.
+
+replica_refresh_allowed(undefined, _Now) ->
+    true;
+replica_refresh_allowed(Last, Now) ->
+    Now - Last >= ?replica_refresh_cooldown.
 
 %% @private
 handle_info(_Info, State) ->
@@ -540,3 +806,49 @@ terminate(_Reason, _State) ->
 %% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% =============================================================================
+%% Tests
+%% =============================================================================
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+%% Tests for the replica read-routing helpers that operate on internal state
+%% live here; everything reachable through the TEST exports is covered in
+%% test/eredis_cluster_replica_tests.erl.
+
+single_node_fabricated_mapping_has_no_replicas_test() ->
+    %% The fabricated standalone mapping (used for non-cluster Redis) must
+    %% yield no replicas.
+    Node = #node{address = "127.0.0.1", port = 30001},
+    Fabricated = get_cluster_slots_from_single_node(Node),
+    [SlotsMap] = parse_cluster_slots(Fabricated, []),
+    ?assertEqual([], SlotsMap#slots_map.replicas).
+
+get_replica_pools_by_slot_test() ->
+    Tab = ets:new(test_slots, [set]),
+    SM = #slots_map{start_slot = 0, end_slot = 16383, index = 1,
+                    node = #node{address = "127.0.0.1", port = 30001,
+                                 options = [], pool = m1},
+                    replicas = [#node{address = "127.0.0.1", port = 30004,
+                                      options = [], pool = r1},
+                                #node{address = "127.0.0.1", port = 30005,
+                                      options = [], pool = undefined}]},
+    ets:insert(Tab, {0, 1}),
+    State = #state{slots_table = Tab, slots_maps = {SM}, version = 1},
+    %% only the connected replica (r1); the unconnected one is skipped.
+    ?assertEqual([r1], get_replica_pools_by_slot(0, State)),
+    %% a slot with no mapping yields [] (not a crash).
+    ?assertEqual([], get_replica_pools_by_slot(999, State)),
+    ets:delete(Tab).
+
+replica_refresh_cooldown_test() ->
+    %% Never refreshed before -> allowed, regardless of the (possibly
+    %% negative) monotonic clock value.
+    ?assert(replica_refresh_allowed(undefined, -576460752)),
+    ?assert(replica_refresh_allowed(undefined, 0)),
+    %% Within the cooldown -> denied; at/after the cooldown -> allowed.
+    ?assertNot(replica_refresh_allowed(100, 100 + ?replica_refresh_cooldown - 1)),
+    ?assert(replica_refresh_allowed(100, 100 + ?replica_refresh_cooldown)).
+
+-endif.
