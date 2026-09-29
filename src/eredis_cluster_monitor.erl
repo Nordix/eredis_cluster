@@ -148,14 +148,15 @@ reload_slots_map(State) ->
     [close_connection(PoolSup, SlotsMap) || SlotsMap <- RemovedFromOldMap],
 
     %% Connect to new nodes
-    ConnectedSlotsMaps = connect_all_slots(State#state.pool_sup, NewSlotsMaps),
+    Cluster = this_cluster(),
+    ConnectedSlotsMaps = connect_all_slots(State#state.pool_sup, Cluster,
+                                           NewSlotsMaps),
     create_slots_cache(State#state.slots_table, ConnectedSlotsMaps),
     NewState = State#state{
         slots_maps = list_to_tuple(ConnectedSlotsMaps),
         version = State#state.version + 1
     },
 
-    Cluster = this_cluster(),
     true = ets:insert(?cluster_state_table(Cluster),
                       [{cluster_state, NewState}]),
 
@@ -418,9 +419,10 @@ close_connection(PoolSup, SlotsMap) ->
             ok
     end.
 
--spec connect_node(pid(), #node{}) -> #node{} | undefined.
-connect_node(PoolSup, Node) ->
+-spec connect_node(pid(), atom(), #node{}) -> #node{} | undefined.
+connect_node(PoolSup, Cluster, Node) ->
     case eredis_cluster_pool:create(PoolSup,
+                                    Cluster,
                                     Node#node.address,
                                     Node#node.port,
                                     Node#node.options) of
@@ -445,9 +447,9 @@ create_slots_cache(SlotsTable, SlotsMaps) ->
   SlotsCacheF = lists:flatten(SlotsCache),
   ets:insert(SlotsTable, SlotsCacheF).
 
--spec connect_all_slots(pid(), [#slots_map{}]) -> [#slots_map{}].
-connect_all_slots(PoolSup, SlotsMapList) ->
-    [SlotsMap#slots_map{node = connect_node(PoolSup,
+-spec connect_all_slots(pid(), atom(), [#slots_map{}]) -> [#slots_map{}].
+connect_all_slots(PoolSup, Cluster, SlotsMapList) ->
+    [SlotsMap#slots_map{node = connect_node(PoolSup, Cluster,
                                             SlotsMap#slots_map.node)} ||
         SlotsMap <- SlotsMapList].
 
@@ -472,7 +474,7 @@ disconnect_(PoolNodes, State) ->
     Cluster = this_cluster(),
 
     NewSlotsMaps = close_connection_with_nodes(PoolSup, SlotsMaps, PoolNodes),
-    ConnectedSlotsMaps = connect_all_slots(PoolSup, NewSlotsMaps),
+    ConnectedSlotsMaps = connect_all_slots(PoolSup, Cluster, NewSlotsMaps),
     create_slots_cache(State#state.slots_table, ConnectedSlotsMaps),
 
     NewState = State#state{
