@@ -62,3 +62,30 @@ explicit_and_default_cluster_test() ->
                  eredis_cluster:q(["GET", "foo"])),
 
     ?assertMatch(ok, eredis_cluster:stop()).
+
+same_nodes_clusters_test() ->
+    application:set_env(eredis_cluster, init_nodes, []),
+    ?assertMatch(ok, eredis_cluster:start()),
+    ok = eredis_cluster:connect(cluster_a, [{"127.0.0.1", 30001}], []),
+    ok = eredis_cluster:connect(cluster_b, [{"127.0.0.1", 30001}], []),
+
+    %% Clusters connected to the same nodes don't share pools
+    ClusterAPools = eredis_cluster:get_all_pools(cluster_a),
+    ClusterBPools = eredis_cluster:get_all_pools(cluster_b),
+    ?assertMatch([_|_], ClusterAPools),
+    ?assertMatch([_|_], ClusterBPools),
+    ?assertEqual(ClusterAPools, ClusterAPools -- ClusterBPools),
+    ?assertEqual(ClusterBPools, ClusterBPools -- ClusterAPools),
+
+    ?assertEqual({ok, <<"OK">>},
+                 eredis_cluster:q(cluster_a, ["SET", "foo", "bar"])),
+    ?assertEqual({ok, <<"bar">>},
+                 eredis_cluster:q(cluster_b, ["GET", "foo"])),
+
+    %% Disconnecting a cluster doesn't affect the other one
+    ok = eredis_cluster:disconnect(cluster_a),
+    ?assertEqual({ok, <<"bar">>},
+                 eredis_cluster:q(cluster_b, ["GET", "foo"])),
+
+    ok = eredis_cluster:disconnect(cluster_b),
+    ?assertMatch(ok, eredis_cluster:stop()).

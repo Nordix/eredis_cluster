@@ -3,8 +3,8 @@
 -behaviour(supervisor).
 
 %% API.
--export([create/4]).
--export([get_existing_pool/2]).
+-export([create/5]).
+-export([get_existing_pool/3]).
 -export([stop/2]).
 -export([transaction/2]).
 
@@ -14,10 +14,11 @@
 
 -include("eredis_cluster.hrl").
 
--spec create(PoolSup::pid(), Host::string(), Port::integer(), options()) ->
+-spec create(PoolSup::pid(), Cluster::atom(), Host::string(), Port::integer(),
+             options()) ->
     {ok, PoolName::atom()} | {error, PoolName::atom()}.
-create(PoolSup, Host, Port, Options) ->
-    PoolName = get_name(Host, Port),
+create(PoolSup, Cluster, Host, Port, Options) ->
+    PoolName = get_name(Cluster, Host, Port),
 
     case whereis(PoolName) of
         undefined ->
@@ -40,13 +41,14 @@ create(PoolSup, Host, Port, Options) ->
             {ok, PoolName}
     end.
 
--spec get_existing_pool(Host :: string() | binary(),
+-spec get_existing_pool(Cluster :: atom(),
+                        Host :: string() | binary(),
                         Port :: inet:port_number()) ->
           {ok, Pool :: atom()} | {error, no_pool}.
-get_existing_pool(Host, Port) when is_binary(Host) ->
-    get_existing_pool(binary_to_list(Host), Port);
-get_existing_pool(Host, Port) when is_list(Host) ->
-    Pool = get_name(Host, Port),
+get_existing_pool(Cluster, Host, Port) when is_binary(Host) ->
+    get_existing_pool(Cluster, binary_to_list(Host), Port);
+get_existing_pool(Cluster, Host, Port) when is_list(Host) ->
+    Pool = get_name(Cluster, Host, Port),
     case whereis(Pool) of
         Pid when is_pid(Pid) ->
             {ok, Pool};
@@ -74,9 +76,13 @@ stop(PoolSup, PoolName) ->
     supervisor:delete_child(PoolSup, PoolName),
     ok.
 
--spec get_name(Host::string(), Port::integer()) -> PoolName::atom().
-get_name(Host, Port) ->
-    list_to_atom(Host ++ "#" ++ integer_to_list(Port)).
+-spec get_name(Cluster::atom(), Host::string(), Port::integer()) ->
+    PoolName::atom().
+get_name(?default_cluster, Host, Port) ->
+    list_to_atom(Host ++ "#" ++ integer_to_list(Port));
+get_name(Cluster, Host, Port) ->
+    list_to_atom(atom_to_list(Cluster) ++ "#" ++ Host ++ "#" ++
+                     integer_to_list(Port)).
 
 -spec start_link() -> {ok, pid()}.
 start_link() ->

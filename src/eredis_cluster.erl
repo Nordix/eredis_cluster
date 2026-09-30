@@ -638,10 +638,10 @@ query(Cluster, Command, PoolKey, Counter) ->
                        Result  :: redis_simple_result() | redis_pipeline_result(),
                        Version :: integer()) ->
           redis_simple_result() | redis_pipeline_result().
-handle_redirects(_Cluster, Command,
+handle_redirects(Cluster, Command,
                  {error, <<"ASK ", RedirectInfo/binary>>} = Result, _Version) ->
     %% Simple command, simple result.
-    case parse_redirect_info(RedirectInfo) of
+    case parse_redirect_info(Cluster, RedirectInfo) of
         {ok, Pool} ->
             AskingPipeline = [[<<"ASKING">>], Command],
             AskingTransaction = fun(W) -> qw(W, AskingPipeline) end,
@@ -657,7 +657,7 @@ handle_redirects(_Cluster, Command,
 handle_redirects(Cluster, Command,
                  {error, <<"MOVED ", RedirectInfo/binary>>} = Result, Version) ->
     %% Simple command, simple result.
-    case parse_redirect_info(RedirectInfo) of
+    case parse_redirect_info(Cluster, RedirectInfo) of
         {ok, Pool} ->
             eredis_cluster_monitor:async_refresh_mapping(Cluster, Version),
             eredis_cluster_pool:transaction(Pool, fun(W) -> qw(W, Command) end);
@@ -690,7 +690,7 @@ handle_redirects(Cluster, [[X|_]|_] = Command, Result, Version)
                     <<"ASK ", AskInfo/binary>> -> {ask, AskInfo};
                     <<"MOVED ", MovedInfo/binary>> -> {moved, MovedInfo}
                 end,
-            case {parse_redirect_info(RedirectInfo), RedirectType} of
+            case {parse_redirect_info(Cluster, RedirectInfo), RedirectType} of
                 {{ok, Pool}, ask} ->
                     AskingCommand = add_asking_to_pipeline_command(Command),
                     AskingTransaction = fun(W) -> qw(W, AskingCommand) end,
@@ -754,9 +754,9 @@ is_not_exec_or_discard(_Command) ->
 
 %% Parses the Rest as in <<"ASK ", Rest/binary>> and returns an
 %% existing pool if any or an error.
--spec parse_redirect_info(RedirectInfo :: binary()) ->
+-spec parse_redirect_info(Cluster :: atom(), RedirectInfo :: binary()) ->
           {ok, ExistingPool :: atom()} | {error, any()}.
-parse_redirect_info(RedirectInfo) ->
+parse_redirect_info(Cluster, RedirectInfo) ->
     try
         [_Slot, AddrPort] = binary:split(RedirectInfo, <<" ">>),
         [Addr0, PortBin] = string:split(AddrPort, ":", trailing),
@@ -771,7 +771,7 @@ parse_redirect_info(RedirectInfo) ->
                end,
         %% Validate the address string
         {ok, _} = inet:parse_address(binary:bin_to_list(Addr)),
-        eredis_cluster_pool:get_existing_pool(Addr, Port)
+        eredis_cluster_pool:get_existing_pool(Cluster, Addr, Port)
     of
         {ok, Pool} ->
             {ok, Pool};
@@ -1163,6 +1163,9 @@ memory_arg([Subcommand | Args]) ->
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+
+parse_redirect_info(RedirectInfo) ->
+    parse_redirect_info(?default_cluster, RedirectInfo).
 
 parse_redirect_info_test() ->
     %% Address and port can be parsed
